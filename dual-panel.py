@@ -1,0 +1,944 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# NAME: Dual Panel – Nautilus Python Extension
+# REQUIRES: python3-nautilus (>= 4.0), python3-gi, gir1.2-adw-1
+# INSTALL:
+#   cp dual-panel.py ~/.local/share/nautilus-python/extensions/
+#   rm -rf ~/.local/share/nautilus-python/extensions/__pycache__
+#   nautilus -q
+
+import os
+import shutil
+import subprocess
+import locale
+import mimetypes
+import stat
+import time
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Nautilus", "4.0")
+from gi.repository import GObject, Gtk, Adw, Gdk, Gio, GLib, Pango, Nautilus
+
+# ---------------------------------------------------------------------------
+# i18n
+# ---------------------------------------------------------------------------
+_lang = locale.getlocale()[0] or ""
+
+if _lang.startswith("fr"):
+    T = {
+        "menu_label":    "Ouvrir en double panneau",
+        "title":         "Double Panneau",
+        "copy":          "Copier →",
+        "copy_left":     "← Copier",
+        "move":          "Déplacer →",
+        "move_left":     "← Déplacer",
+        "new_folder":    "Nouveau dossier",
+        "new_file":      "Nouveau fichier",
+        "rename":        "Renommer",
+        "delete":        "Supprimer",
+        "refresh":       "Actualiser",
+        "go_up":         "Dossier parent",
+        "col_name":      "Nom",
+        "col_size":      "Taille",
+        "col_date":      "Modifié",
+        "col_perms":     "Droits",
+        "confirm_del":   "Supprimer {name} ?",
+        "confirm_del2":  "Supprimer {n} éléments ?",
+        "confirm_move":  "Déplacer {name} vers {dst} ?",
+        "confirm_move2": "Déplacer {n} éléments vers {dst} ?",
+        "err_title":     "Erreur",
+        "new_folder_name": "Nouveau dossier",
+        "new_file_name":   "nouveau_fichier.txt",
+        "enter_name":    "Nom :",
+        "cancel":        "Annuler",
+        "ok":            "OK",
+        "delete_ok":     "Supprimer",
+        "open_terminal":  "Terminal ici",
+        "delete_perm":    "Supprimer définitivement",
+        "confirm_perm":   "Supprimer DÉFINITIVEMENT {name} ? Cette action est irréversible.",
+        "confirm_perm2":  "Supprimer DÉFINITIVEMENT {n} éléments ? Cette action est irréversible.",
+        "context_open":   "Ouvrir",
+        "context_copy":   "Copier vers l'autre panneau",
+        "context_move":   "Déplacer vers l'autre panneau",
+        "context_rename": "Renommer",
+        "context_delete": "Corbeille",
+        "context_delete_perm": "Supprimer définitivement",
+        "context_new_folder":  "Nouveau dossier",
+        "context_new_file":    "Nouveau fichier",
+        "context_terminal":    "Terminal ici",
+    }
+else:
+    T = {
+        "menu_label":    "Open in dual panel",
+        "title":         "Dual Panel",
+        "copy":          "Copy →",
+        "copy_left":     "← Copy",
+        "move":          "Move →",
+        "move_left":     "← Move",
+        "new_folder":    "New folder",
+        "new_file":      "New file",
+        "rename":        "Rename",
+        "delete":        "Delete",
+        "refresh":       "Refresh",
+        "go_up":         "Parent folder",
+        "col_name":      "Name",
+        "col_size":      "Size",
+        "col_date":      "Modified",
+        "col_perms":     "Permissions",
+        "confirm_del":   "Delete {name}?",
+        "confirm_del2":  "Delete {n} items?",
+        "confirm_move":  "Move {name} to {dst}?",
+        "confirm_move2": "Move {n} items to {dst}?",
+        "err_title":     "Error",
+        "new_folder_name": "New folder",
+        "new_file_name":   "new_file.txt",
+        "enter_name":    "Name:",
+        "cancel":        "Cancel",
+        "ok":            "OK",
+        "delete_ok":     "Delete",
+        "open_terminal":  "Terminal here",
+        "delete_perm":    "Delete permanently",
+        "confirm_perm":   "Permanently DELETE {name}? This cannot be undone.",
+        "confirm_perm2":  "Permanently DELETE {n} items? This cannot be undone.",
+        "context_open":   "Open",
+        "context_copy":   "Copy to other panel",
+        "context_move":   "Move to other panel",
+        "context_rename": "Rename",
+        "context_delete": "Move to trash",
+        "context_delete_perm": "Delete permanently",
+        "context_new_folder":  "New folder",
+        "context_new_file":    "New file",
+        "context_terminal":    "Terminal here",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _nautilus_window():
+    app = Gtk.Application.get_default()
+    if app is None:
+        return None
+    win = app.get_active_window()
+    return win or (app.get_windows()[0] if app.get_windows() else None)
+
+def _fmt_size(size):
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+def _fmt_date(ts):
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+def _fmt_perms(mode):
+    bits = ""
+    for who in [(stat.S_IRUSR, stat.S_IWUSR, stat.S_IXUSR),
+                (stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP),
+                (stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH)]:
+        bits += "r" if mode & who[0] else "-"
+        bits += "w" if mode & who[1] else "-"
+        bits += "x" if mode & who[2] else "-"
+    return bits
+
+def _icon_for(path, is_dir):
+    if is_dir:
+        return "folder-symbolic"
+    mime, _ = mimetypes.guess_type(path)
+    if not mime:
+        return "text-x-generic-symbolic"
+    cat = mime.split("/")[0]
+    return {
+        "image":   "image-x-generic-symbolic",
+        "video":   "video-x-generic-symbolic",
+        "audio":   "audio-x-generic-symbolic",
+        "text":    "text-x-generic-symbolic",
+        "application": "application-x-executable-symbolic",
+    }.get(cat, "text-x-generic-symbolic")
+
+
+# ---------------------------------------------------------------------------
+# File entry model
+# ---------------------------------------------------------------------------
+
+class FileEntry(GObject.Object):
+    __gtype_name__ = "DualPanelFileEntry"
+
+    def __init__(self, path):
+        super().__init__()
+        self.path    = path
+        self.name    = os.path.basename(path)
+        self.is_dir  = os.path.isdir(path)
+        try:
+            s = os.stat(path)
+            self.size  = s.st_size
+            self.mtime = s.st_mtime
+            self.mode  = s.st_mode
+        except OSError:
+            self.size = self.mtime = self.mode = 0
+
+    @property
+    def size_str(self):
+        return "—" if self.is_dir else _fmt_size(self.size)
+
+    @property
+    def date_str(self):
+        return _fmt_date(self.mtime) if self.mtime else ""
+
+    @property
+    def perms_str(self):
+        return _fmt_perms(self.mode) if self.mode else ""
+
+
+# ---------------------------------------------------------------------------
+# Panel widget
+# ---------------------------------------------------------------------------
+
+class FilePanel(Gtk.Box):
+    __gtype_name__ = "DualPanelFilePanel"
+
+    def __init__(self, start_path: str):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._path     = start_path
+        self._entries  = []
+        self._other    = None   # référence à l'autre panneau (setté après)
+        self._sort_col = "name"
+        self._sort_asc = True
+
+        self._build()
+        self.navigate(start_path)
+
+    def set_other_panel(self, other):
+        self._other = other
+
+    # -- Construction --------------------------------------------------------
+
+    def _build(self):
+        # Barre adresse
+        addr_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        addr_bar.set_margin_top(4)
+        addr_bar.set_margin_bottom(4)
+        addr_bar.set_margin_start(6)
+        addr_bar.set_margin_end(6)
+
+        up_btn = Gtk.Button(icon_name="go-up-symbolic")
+        up_btn.set_tooltip_text(T["go_up"])
+        up_btn.connect("clicked", lambda _: self.navigate(os.path.dirname(self._path)))
+        addr_bar.append(up_btn)
+
+        self._addr_entry = Gtk.Entry()
+        self._addr_entry.set_hexpand(True)
+        self._addr_entry.connect("activate", self._on_addr_activate)
+        addr_bar.append(self._addr_entry)
+
+        refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh_btn.set_tooltip_text(T["refresh"])
+        refresh_btn.connect("clicked", lambda _: self.refresh())
+        addr_bar.append(refresh_btn)
+
+        term_btn = Gtk.Button(icon_name="utilities-terminal-symbolic")
+        term_btn.set_tooltip_text(T["open_terminal"])
+        term_btn.connect("clicked", self._open_terminal)
+        addr_bar.append(term_btn)
+
+        self.append(addr_bar)
+
+        # Séparateur
+        self.append(Gtk.Separator())
+
+        # Liste
+        self._store     = Gio.ListStore(item_type=FileEntry)
+        self._sort_model = Gtk.SortListModel.new(self._store, None)
+        self._selection  = Gtk.MultiSelection.new(self._sort_model)
+
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup",  self._factory_setup)
+        factory.connect("bind",   self._factory_bind)
+
+        # CSS pour la corbeille rouge
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .red-icon { color: #e01b24; }
+            .destructive-trash:hover { background: alpha(#e01b24, 0.15); }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        col_view = Gtk.ColumnView(model=self._selection)
+        col_view.set_show_column_separators(True)
+        col_view.set_single_click_activate(False)
+        col_view.connect("activate", self._on_activate)
+        self._col_view = col_view
+
+        # Colonnes
+        self._add_column(col_view, T["col_name"],  "name",  320, self._factory_name_setup,  self._factory_name_bind)
+        self._add_column(col_view, T["col_size"],  "size",  90,  self._factory_size_setup,  self._factory_size_bind)
+        self._add_column(col_view, T["col_date"],  "mtime", 140, self._factory_date_setup,  self._factory_date_bind)
+        self._add_column(col_view, T["col_perms"], "perms", 90,  self._factory_perms_setup, self._factory_perms_bind)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_child(col_view)
+        self.append(scroll)
+
+        # Actions bar
+        self._build_actions()
+
+        # Drag & drop
+        self._setup_dnd()
+
+        # Menu contextuel + raccourcis
+        self._setup_context_menu()
+        self._setup_keyboard()
+
+    def _add_column(self, cv, title, sort_key, width, setup_fn, bind_fn):
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", setup_fn)
+        factory.connect("bind",  bind_fn)
+        col = Gtk.ColumnViewColumn(title=title, factory=factory)
+        col.set_fixed_width(width)
+        col.set_resizable(True)
+        col.sort_key = sort_key
+        header_btn = Gtk.Button(label=title)
+        header_btn.connect("clicked", self._on_sort_click, sort_key)
+        cv.append_column(col)
+
+    def _build_actions(self):
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        bar.set_margin_top(4)
+        bar.set_margin_bottom(4)
+        bar.set_margin_start(6)
+        bar.set_margin_end(6)
+
+        def add_btn(label, icon, tooltip, cb):
+            b = Gtk.Button(icon_name=icon)
+            b.set_tooltip_text(tooltip)
+            b.connect("clicked", cb)
+            bar.append(b)
+            return b
+
+        add_btn("", "folder-new-symbolic",       T["new_folder"], self._on_new_folder)
+        add_btn("", "document-new-symbolic",     T["new_file"],   self._on_new_file)
+        add_btn("", "document-edit-symbolic",    T["rename"],     self._on_rename)
+        add_btn("", "user-trash-symbolic",       T["delete"],     self._on_delete)
+        # Bouton corbeille rouge pour suppression définitive
+        perm_btn = Gtk.Button()
+        perm_btn.set_tooltip_text(T["delete_perm"])
+        perm_img = Gtk.Image.new_from_icon_name("user-trash-symbolic")
+        perm_img.add_css_class("red-icon")
+        perm_btn.set_child(perm_img)
+        perm_btn.add_css_class("destructive-trash")
+        perm_btn.connect("clicked", self._on_delete_perm)
+        bar.append(perm_btn)
+
+        bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+
+        self._copy_btn = Gtk.Button(label=T["copy"])
+        self._copy_btn.add_css_class("suggested-action")
+        self._copy_btn.connect("clicked", self._on_copy)
+        bar.append(self._copy_btn)
+
+        self._move_btn = Gtk.Button(label=T["move"])
+        self._move_btn.connect("clicked", self._on_move)
+        bar.append(self._move_btn)
+
+        self.append(Gtk.Separator())
+        self.append(bar)
+
+    # -- Column factories ----------------------------------------------------
+
+    def _factory_name_setup(self, factory, item):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.set_margin_start(4)
+        icon = Gtk.Image()
+        icon.set_icon_size(Gtk.IconSize.NORMAL)
+        lbl  = Gtk.Label()
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_hexpand(True)
+        box.append(icon)
+        box.append(lbl)
+        item.set_child(box)
+
+    def _factory_name_bind(self, factory, item):
+        entry = item.get_item()
+        box   = item.get_child()
+        icon  = box.get_first_child()
+        lbl   = icon.get_next_sibling()
+        icon.set_from_icon_name(_icon_for(entry.path, entry.is_dir))
+        lbl.set_text(entry.name)
+        if entry.is_dir:
+            lbl.add_css_class("bold")
+
+    def _factory_size_setup(self, factory, item):
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.END)
+        lbl.set_margin_end(8)
+        item.set_child(lbl)
+
+    def _factory_size_bind(self, factory, item):
+        item.get_child().set_text(item.get_item().size_str)
+
+    def _factory_date_setup(self, factory, item):
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.START)
+        item.set_child(lbl)
+
+    def _factory_date_bind(self, factory, item):
+        item.get_child().set_text(item.get_item().date_str)
+
+    def _factory_perms_setup(self, factory, item):
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.START)
+        lbl.add_css_class("monospace")
+        item.set_child(lbl)
+
+    def _factory_perms_bind(self, factory, item):
+        item.get_child().set_text(item.get_item().perms_str)
+
+    def _factory_setup(self, f, i): pass
+    def _factory_bind(self, f, i):  pass
+
+    # -- Navigation ----------------------------------------------------------
+
+    def navigate(self, path: str):
+        if not os.path.isdir(path):
+            return
+        self._path = path
+        self._addr_entry.set_text(path)
+        self.refresh()
+
+    def refresh(self):
+        self._store.remove_all()
+        try:
+            for name in os.listdir(self._path):
+                full = os.path.join(self._path, name)
+                self._store.append(FileEntry(full))
+        except PermissionError:
+            pass
+        self._apply_sort()
+
+    def _apply_sort(self):
+        def compare(a, b, _):
+            # Ordre Nautilus :
+            # 1. Dossiers normaux  2. Dossiers cachés
+            # 3. Fichiers normaux  4. Fichiers cachés
+            a_hidden = a.name.startswith(".")
+            b_hidden = b.name.startswith(".")
+
+            # Groupe de priorité : dossier normal=0, dossier caché=1,
+            #                      fichier normal=2, fichier caché=3
+            def group(e, hidden):
+                if e.is_dir:
+                    return 1 if hidden else 0
+                return 3 if hidden else 2
+
+            ga, gb = group(a, a_hidden), group(b, b_hidden)
+            if ga != gb:
+                # Le groupement ne s'inverse pas avec le sens du tri
+                return -1 if ga < gb else 1
+
+            va = getattr(a, self._sort_col, a.name)
+            vb = getattr(b, self._sort_col, b.name)
+            if isinstance(va, str):
+                # Pour les cachés, ignorer le "." dans la comparaison alpha
+                va = va.lstrip(".").lower()
+                vb = vb.lstrip(".").lower()
+            if va < vb:
+                result = -1
+            elif va > vb:
+                result = 1
+            else:
+                result = 0
+            return result if self._sort_asc else -result
+
+        sorter = Gtk.CustomSorter.new(compare)
+        self._sort_model.set_sorter(sorter)
+
+    def _on_addr_activate(self, entry):
+        self.navigate(entry.get_text().strip())
+
+    def _on_activate(self, col_view, pos):
+        entry = self._sort_model.get_item(pos)
+        if entry and entry.is_dir:
+            self.navigate(entry.path)
+        elif entry:
+            try:
+                Gio.AppInfo.launch_default_for_uri(
+                    f"file://{entry.path}", None)
+            except Exception:
+                pass
+
+    def _on_sort_click(self, btn, sort_key):
+        if self._sort_col == sort_key:
+            self._sort_asc = not self._sort_asc
+        else:
+            self._sort_col = sort_key
+            self._sort_asc = True
+        self._apply_sort()
+
+    # -- Sélection -----------------------------------------------------------
+
+    def get_selected_entries(self):
+        result = []
+        bs = self._selection.get_selection()
+        for i in range(self._sort_model.get_n_items()):
+            if bs.contains(i):
+                result.append(self._sort_model.get_item(i))
+        return result
+
+    # -- Actions -------------------------------------------------------------
+
+    def _on_copy(self, _btn):
+        if not self._other:
+            return
+        self._do_transfer(self._other._path, move=False)
+
+    def _on_move(self, _btn):
+        if not self._other:
+            return
+        self._do_transfer(self._other._path, move=True)
+
+    def _do_transfer(self, dst_dir: str, move: bool):
+        selected = self.get_selected_entries()
+        if not selected:
+            return
+        verb = T["move"] if move else T["copy"]
+        n    = len(selected)
+        if n == 1:
+            msg = (T["confirm_move"] if move else T["confirm_del"]).format(
+                name=selected[0].name, dst=dst_dir)
+        else:
+            msg = (T["confirm_move2"] if move else T["confirm_del2"]).format(
+                n=n, dst=dst_dir)
+        # Pas de confirm pour copy, seulement pour move
+        if move:
+            self._confirm(msg, lambda: self._exec_transfer(selected, dst_dir, move))
+        else:
+            self._exec_transfer(selected, dst_dir, move)
+
+    def _exec_transfer(self, entries, dst_dir, move):
+        for e in entries:
+            dst = os.path.join(dst_dir, e.name)
+            try:
+                if move:
+                    shutil.move(e.path, dst)
+                else:
+                    if e.is_dir:
+                        shutil.copytree(e.path, dst, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(e.path, dst)
+            except Exception as ex:
+                self._error(str(ex))
+                return
+        self.refresh()
+        if self._other:
+            self._other.refresh()
+
+    def _on_delete(self, _btn):
+        selected = self.get_selected_entries()
+        if not selected:
+            return
+        n   = len(selected)
+        msg = T["confirm_del2"].format(n=n) if n > 1 else \
+              T["confirm_del"].format(name=selected[0].name)
+        self._confirm(msg, lambda: self._exec_delete(selected), danger=True)
+
+    def _exec_delete(self, entries):
+        for e in entries:
+            try:
+                trash = Gio.File.new_for_path(e.path)
+                trash.trash(None)
+            except Exception as ex:
+                self._error(str(ex))
+                return
+        self.refresh()
+
+    def _on_delete_perm(self, _btn):
+        selected = self.get_selected_entries()
+        if not selected:
+            return
+        n   = len(selected)
+        msg = T["confirm_perm2"].format(n=n) if n > 1 else               T["confirm_perm"].format(name=selected[0].name)
+        self._confirm(msg, lambda: self._exec_delete_perm(selected), danger=True)
+
+    def _exec_delete_perm(self, entries):
+        for e in entries:
+            try:
+                if e.is_dir:
+                    shutil.rmtree(e.path)
+                else:
+                    os.remove(e.path)
+            except Exception as ex:
+                self._error(str(ex))
+                return
+        self.refresh()
+
+    def _on_new_folder(self, _btn):
+        self._ask_name(T["new_folder_name"], lambda name: self._exec_mkdir(name))
+
+    def _exec_mkdir(self, name):
+        try:
+            os.makedirs(os.path.join(self._path, name), exist_ok=True)
+            self.refresh()
+        except Exception as ex:
+            self._error(str(ex))
+
+    def _on_new_file(self, _btn):
+        self._ask_name(T["new_file_name"], lambda name: self._exec_touch(name))
+
+    def _exec_touch(self, name):
+        try:
+            open(os.path.join(self._path, name), "a").close()
+            self.refresh()
+        except Exception as ex:
+            self._error(str(ex))
+
+    def _on_rename(self, _btn):
+        selected = self.get_selected_entries()
+        if len(selected) != 1:
+            return
+        self._ask_name(selected[0].name,
+                       lambda name: self._exec_rename(selected[0].path, name))
+
+    def _exec_rename(self, old_path, new_name):
+        try:
+            new_path = os.path.join(os.path.dirname(old_path), new_name)
+            os.rename(old_path, new_path)
+            self.refresh()
+        except Exception as ex:
+            self._error(str(ex))
+
+    def _open_terminal(self, _btn):
+        for term in ["gnome-terminal", "xterm", "konsole", "xfce4-terminal"]:
+            if shutil.which(term):
+                subprocess.Popen([term], cwd=self._path)
+                return
+
+    # -- Menu contextuel clic droit -----------------------------------------
+
+    def _build_context_menu(self):
+        menu = Gio.Menu()
+        selected = self.get_selected_entries()
+
+        if len(selected) == 1 and not selected[0].is_dir:
+            menu.append(T["context_open"],   "panel.open-file")
+        if selected:
+            menu.append(T["context_copy"],   "panel.copy-other")
+            menu.append(T["context_move"],   "panel.move-other")
+        if len(selected) == 1:
+            menu.append(T["context_rename"], "panel.rename")
+        if selected:
+            menu.append(T["context_delete"],      "panel.delete-trash")
+            menu.append(T["context_delete_perm"],  "panel.delete-perm")
+        menu.append(T["context_new_folder"], "panel.new-folder")
+        menu.append(T["context_new_file"],   "panel.new-file")
+        menu.append(T["context_terminal"],   "panel.terminal")
+        return menu
+
+    def _setup_context_menu(self):
+        # Actions du groupe "panel"
+        ag = Gio.SimpleActionGroup()
+        actions = {
+            "open-file":    lambda *_: self._open_selected(),
+            "copy-other":   lambda *_: self._on_copy(None),
+            "move-other":   lambda *_: self._on_move(None),
+            "rename":       lambda *_: self._on_rename(None),
+            "delete-trash": lambda *_: self._on_delete(None),
+            "delete-perm":  lambda *_: self._on_delete_perm(None),
+            "new-folder":   lambda *_: self._on_new_folder(None),
+            "new-file":     lambda *_: self._on_new_file(None),
+            "terminal":     lambda *_: self._open_terminal(None),
+        }
+        for name, cb in actions.items():
+            a = Gio.SimpleAction.new(name, None)
+            a.connect("activate", cb)
+            ag.add_action(a)
+        self._col_view.insert_action_group("panel", ag)
+
+        # Geste clic droit
+        gesture = Gtk.GestureClick()
+        gesture.set_button(3)
+        gesture.connect("pressed", self._on_right_click)
+        self._col_view.add_controller(gesture)
+
+    def _on_right_click(self, gesture, n, x, y):
+        menu_model = self._build_context_menu()
+        popover    = Gtk.PopoverMenu.new_from_model(menu_model)
+        popover.set_parent(self._col_view)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover.popup()
+
+    def _open_selected(self):
+        selected = self.get_selected_entries()
+        if len(selected) == 1 and not selected[0].is_dir:
+            try:
+                Gio.AppInfo.launch_default_for_uri(
+                    f"file://{selected[0].path}", None)
+            except Exception:
+                pass
+
+    # -- Raccourcis clavier --------------------------------------------------
+
+    def _setup_keyboard(self):
+        ctrl = Gtk.ShortcutController()
+        ctrl.set_scope(Gtk.ShortcutScope.LOCAL)
+
+        def add(trigger_str, cb):
+            trigger = Gtk.ShortcutTrigger.parse_string(trigger_str)
+            action  = Gtk.CallbackAction.new(lambda *a: cb() or True)
+            ctrl.add_shortcut(Gtk.Shortcut.new(trigger, action))
+
+        add("Delete",         lambda: self._on_delete(None))          # Suppr → corbeille
+        add("<Shift>Delete",  lambda: self._on_delete_perm(None))     # Shift+Suppr → définitif
+        add("F2",             lambda: self._on_rename(None))
+        add("<Ctrl>c",        lambda: self._on_copy(None))
+        add("<Ctrl>x",        lambda: self._on_move(None))
+        add("<Ctrl>n",        lambda: self._on_new_folder(None))
+        add("BackSpace",      lambda: self.navigate(os.path.dirname(self._path)))
+
+        self._col_view.add_controller(ctrl)
+        self._col_view.set_focusable(True)
+
+    # -- DnD -----------------------------------------------------------------
+
+    def _setup_dnd(self):
+        # Source drag
+        drag_src = Gtk.DragSource()
+        drag_src.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drag_src.connect("prepare", self._on_drag_prepare)
+        self._col_view.add_controller(drag_src)
+
+        # Drop target
+        drop_tgt = Gtk.DropTarget.new(GObject.TYPE_STRING,
+                                      Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drop_tgt.connect("drop", self._on_drop)
+        self._col_view.add_controller(drop_tgt)
+
+    def _on_drag_prepare(self, src, x, y):
+        selected = self.get_selected_entries()
+        if not selected:
+            return None
+        paths = "\n".join(e.path for e in selected)
+        val   = GObject.Value(GObject.TYPE_STRING, paths)
+        return Gdk.ContentProvider.new_for_value(val)
+
+    def _on_drop(self, tgt, value, x, y):
+        if not isinstance(value, str):
+            return False
+        paths = [p.strip() for p in value.splitlines() if p.strip()]
+        for path in paths:
+            try:
+                dst = os.path.join(self._path, os.path.basename(path))
+                shutil.copy2(path, dst) if os.path.isfile(path) else \
+                    shutil.copytree(path, dst, dirs_exist_ok=True)
+            except Exception as ex:
+                self._error(str(ex))
+                return False
+        self.refresh()
+        return True
+
+    # -- Dialogs helpers -----------------------------------------------------
+
+    def _get_parent_win(self):
+        w = self.get_root()
+        return w if isinstance(w, Gtk.Window) else _nautilus_window()
+
+    def _confirm(self, msg, on_ok, danger=False):
+        dlg = Adw.Window(title=T["title"])
+        dlg.set_modal(True)
+        dlg.set_transient_for(self._get_parent_win())
+        dlg.set_default_size(360, -1)
+
+        tv = Adw.ToolbarView()
+        tv.add_top_bar(Adw.HeaderBar())
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+
+        lbl = Gtk.Label(label=msg)
+        lbl.set_wrap(True)
+        box.append(lbl)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+
+        cancel = Gtk.Button(label=T["cancel"])
+        cancel.connect("clicked", lambda _: dlg.destroy())
+        btn_box.append(cancel)
+
+        ok_label = T["delete_ok"] if danger else T["ok"]
+        ok_btn = Gtk.Button(label=ok_label)
+        ok_btn.add_css_class("destructive-action" if danger else "suggested-action")
+
+        def on_ok_click(_):
+            dlg.destroy()
+            on_ok()
+
+        ok_btn.connect("clicked", on_ok_click)
+        btn_box.append(ok_btn)
+        box.append(btn_box)
+
+        tv.set_content(box)
+        dlg.set_content(tv)
+        dlg.present()
+
+    def _ask_name(self, default: str, on_ok):
+        dlg = Adw.Window(title=T["title"])
+        dlg.set_modal(True)
+        dlg.set_transient_for(self._get_parent_win())
+        dlg.set_default_size(340, -1)
+
+        tv = Adw.ToolbarView()
+        tv.add_top_bar(Adw.HeaderBar())
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_top(14)
+        box.set_margin_bottom(14)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+
+        box.append(Gtk.Label(label=T["enter_name"]))
+        entry = Gtk.Entry()
+        entry.set_text(default)
+        entry.select_region(0, -1)
+        box.append(entry)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+
+        cancel = Gtk.Button(label=T["cancel"])
+        cancel.connect("clicked", lambda _: dlg.destroy())
+        btn_box.append(cancel)
+
+        ok_btn = Gtk.Button(label=T["ok"])
+        ok_btn.add_css_class("suggested-action")
+
+        def do_ok(_):
+            name = entry.get_text().strip()
+            if name:
+                dlg.destroy()
+                on_ok(name)
+
+        ok_btn.connect("clicked", do_ok)
+        entry.connect("activate", do_ok)
+        btn_box.append(ok_btn)
+        box.append(btn_box)
+
+        tv.set_content(box)
+        dlg.set_content(tv)
+        dlg.present()
+        entry.grab_focus()
+
+    def _error(self, msg: str):
+        Gtk.AlertDialog(message=f"{T['err_title']}: {msg}").show(
+            self._get_parent_win())
+
+
+# ---------------------------------------------------------------------------
+# Main dual-panel window
+# ---------------------------------------------------------------------------
+
+class DualPanelWindow(Adw.Window):
+    __gtype_name__ = "DualPanelWindow"
+
+    def __init__(self, start_path: str):
+        super().__init__(title=T["title"])
+        self.set_default_size(1400, 800)
+        self.set_transient_for(_nautilus_window())
+
+        tv = Adw.ToolbarView()
+        tv.add_top_bar(Adw.HeaderBar())
+
+        # Deux panneaux côte à côte
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(700)
+        paned.set_wide_handle(True)
+
+        self._left  = FilePanel(start_path)
+        self._right = FilePanel(start_path)
+        self._left.set_other_panel(self._right)
+        self._right.set_other_panel(self._left)
+
+        # Mise à jour des labels copier/déplacer selon quel panneau est actif
+        self._left._copy_btn.set_label(T["copy"])
+        self._right._copy_btn.set_label(T["copy_left"])
+        self._left._move_btn.set_label(T["move"])
+        self._right._move_btn.set_label(T["move_left"])
+
+        paned.set_start_child(self._left)
+        paned.set_end_child(self._right)
+
+        tv.set_content(paned)
+        self.set_content(tv)
+
+        # Raccourcis clavier
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        ctrl = Gtk.ShortcutController()
+        ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
+
+        def add_shortcut(trigger_str, cb):
+            trigger = Gtk.ShortcutTrigger.parse_string(trigger_str)
+            action  = Gtk.CallbackAction.new(lambda *a: cb() or True)
+            ctrl.add_shortcut(Gtk.Shortcut.new(trigger, action))
+
+        add_shortcut("F5",          lambda: (self._left.refresh(), self._right.refresh()))
+        add_shortcut("<Alt>Left",   lambda: self._left.navigate(
+            os.path.dirname(self._left._path)))
+        add_shortcut("<Alt>Right",  lambda: self._right.navigate(
+            os.path.dirname(self._right._path)))
+
+        self.add_controller(ctrl)
+
+
+# ---------------------------------------------------------------------------
+# Nautilus extension
+# ---------------------------------------------------------------------------
+
+class DualPanelExtension(GObject.GObject, Nautilus.MenuProvider):
+    __gtype_name__ = "DualPanelExtension"
+
+    def get_file_items(self, files):
+        # Afficher uniquement sur dossier ou espace vide
+        dirs = [f for f in files
+                if f.get_uri_scheme() == "file" and f.is_directory()]
+        if not dirs:
+            return []
+
+        item = Nautilus.MenuItem(
+            name="DualPanel::Open",
+            label=T["menu_label"],
+            tip="Open a dual-panel file manager starting here",
+            icon="view-dual-symbolic",
+        )
+        item.connect("activate", self._on_activate, dirs[0])
+        return [item]
+
+    def get_background_items(self, folder):
+        item = Nautilus.MenuItem(
+            name="DualPanel::OpenBg",
+            label=T["menu_label"],
+            tip="Open a dual-panel file manager here",
+            icon="view-dual-symbolic",
+        )
+        item.connect("activate", self._on_activate_bg, folder)
+        return [item]
+
+    def _on_activate(self, _item, nfile):
+        DualPanelWindow(nfile.get_location().get_path()).present()
+
+    def _on_activate_bg(self, _item, folder):
+        DualPanelWindow(folder.get_location().get_path()).present()

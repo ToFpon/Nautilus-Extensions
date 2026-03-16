@@ -22,6 +22,7 @@
 | ✏️ Quick Edit | `nautilus_edit_ext.py` | Open text files directly in an editor |
 | 🔏 Watermark PDF | `watermark-pdf.py` | Secure watermarking with flattening |
 | 📁 Folder Color Revival | `folder-color-revival.py` | Color & emblem tagging for folders |
+| 🗂️ Dual Panel | `dual-panel.py` | Double-pane file manager inside Nautilus |
 
 ---
 
@@ -181,6 +182,43 @@ DEBUG=1 nautilus --no-desktop 2>&1 | grep "folder-color"
 ```
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0`
+
+
+---
+
+### 🗂️ Dual Panel — `dual-panel.py`
+
+Opens a fully-featured **double-pane file manager** directly from Nautilus, similar to Nemo or Thunar's split view — a feature Nautilus once had and many users still miss.
+
+Available from right-clicking any folder **or** from the background context menu.
+
+**Features:**
+- Side-by-side dual panel with independent navigation
+- Editable address bar in each panel
+- Resizable divider between panels
+- Sortable columns: Name, Size, Date modified, Permissions
+- Sort order matches Nautilus: normal folders → hidden folders → normal files → hidden files
+- Folder and file icons by MIME type
+
+**File operations:**
+| Action | Button | Keyboard |
+|---|---|---|
+| Copy to other panel | Copy → / ← Copy | `Ctrl+C` |
+| Move to other panel | Move → / ← Move | `Ctrl+X` |
+| New folder | 📁 | `Ctrl+N` |
+| New file | 📄 | — |
+| Rename | ✏️ | `F2` |
+| Move to trash | 🗑️ | `Delete` |
+| Delete permanently | 🗑️ *(red)* | `Shift+Delete` |
+| Parent folder | ↑ | `Backspace` |
+| Refresh both panels | — | `F5` |
+| Open terminal here | >_ | — |
+
+**Right-click context menu** — Open, Copy/Move to other panel, Rename, Move to trash, Delete permanently, New folder, New file, Terminal here
+
+**Drag & drop** — drag files between panels to copy them instantly
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
 
 
 ---
