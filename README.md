@@ -21,6 +21,7 @@
 | 🔗 Merge PDF | `merge-pdf.py` | Merge multiple PDFs into one |
 | ✏️ Quick Edit | `nautilus_edit_ext.py` | Open text files directly in an editor |
 | 🔏 Watermark PDF | `watermark-pdf.py` | Secure watermarking with flattening |
+| 📁 Folder Color Revival | `folder-color-revival.py` | Color & emblem tagging for folders |
 
 ---
 
@@ -148,6 +149,39 @@ Adds a customizable text watermark to PDF files, designed to **protect sensitive
 > 💡 **Security tip:** Use flatten at 200 DPI, then run the result through *Compress PDF* for a document that is both tamper-proof and lightweight.
 
 **Dependencies:** `python3-nautilus` `ghostscript` `python3-pypdf` `python3-gi` `gir1.2-adw-1`
+
+---
+
+### 📁 Folder Color Revival — `folder-color-revival.py`
+
+A debugged and modernized revival of the popular [Folder Color](https://github.com/costales/folder-color) extension, rewritten for **Nautilus 43+ / GTK4 / python3-nautilus 4.0**.
+
+The original extension was plagued with startup crashes and freezes due to several incompatibilities with modern Nautilus. This version fixes all known issues.
+
+**Features:**
+- Color tagging for folders (14 colors: black, blue, brown, cyan, green, grey, magenta, orange, pink, purple, red, violet, white, yellow)
+- Emblem tagging (Important, In Progress, Favorite, Finished, New)
+- Automatic detection of available colors in the current icon theme
+- Support for special user directories (Desktop, Documents, Downloads, etc.)
+- One-click restore to default icon
+- Built-in debug logging (see below)
+
+**Bugs fixed vs original:**
+| # | Issue | Fix |
+|---|---|---|
+| 1 | Crash on load — `@GETTEXT_PACKAGE@` placeholder never replaced | Replaced with standard `gettext` fallback |
+| 2 | Freeze on startup — `USER_DIRS` built at module level before GLib ready | Moved to lazy `_get_user_dirs()` function |
+| 3 | Crash if GSettings schema missing | Wrapped in `try/except` |
+| 4 | Nautilus freeze — icon lookups blocking main thread in `__init__` | Deferred via `GLib.idle_add()` |
+| 5 | GLib type conflicts with other extensions | Added explicit `__gtype_name__` |
+
+**Debug mode:**
+```bash
+DEBUG=1 nautilus --no-desktop 2>&1 | grep "folder-color"
+```
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0`
+
 
 ---
 
