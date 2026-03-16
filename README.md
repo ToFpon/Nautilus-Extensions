@@ -12,21 +12,21 @@
 
 ## 📦 Extensions
 
-| Extension | Fichier | Description |
+| Extension | File | Description |
 |---|---|---|
-| 🎨 Annotate Image | `annotate-image.py` | Éditeur d'annotations sur images PNG |
-| 🗜️ Compress PDF | `compress-pdf.py` | Compression de PDF via Ghostscript |
-| ⏱️ Media Duration | `duration-column.py` | Colonne durée pour fichiers audio/vidéo |
-| 👁️ Hidden Files Dimmer | `hidden-dim-*.py` | Atténuation visuelle des fichiers cachés |
-| 🔗 Merge PDF | `merge-pdf.py` | Fusion de plusieurs PDF en un seul |
-| ✏️ Quick Edit | `nautilus_edit_ext.py` | Ouverture rapide dans un éditeur de texte |
-| 🔏 Watermark PDF | `watermark-pdf.py` | Filigrane sécurisé avec aplatissement |
+| 🎨 Annotate Image | `annotate-image.py` | Full-featured PNG annotation editor |
+| 🗜️ Compress PDF | `compress-pdf.py` | PDF compression via Ghostscript |
+| ⏱️ Media Duration | `duration-column.py` | Duration column for audio/video files |
+| 👁️ Hidden Files Dimmer | `hidden-dim-*.py` | Visual dimming of hidden files |
+| 🔗 Merge PDF | `merge-pdf.py` | Merge multiple PDFs into one |
+| ✏️ Quick Edit | `nautilus_edit_ext.py` | Open text files directly in an editor |
+| 🔏 Watermark PDF | `watermark-pdf.py` | Secure watermarking with flattening |
 
 ---
 
 ## ⚙️ Installation
 
-### Prérequis
+### Prerequisites
 
 ```bash
 sudo apt install \
@@ -40,126 +40,126 @@ sudo apt install \
   python3-cairo
 ```
 
-### Installation d'une extension
+### Installing an extension
 
 ```bash
-# Créer le dossier si nécessaire
+# Create the directory if needed
 mkdir -p ~/.local/share/nautilus-python/extensions/
 
-# Copier l'extension
+# Copy the extension
 cp extension-name.py ~/.local/share/nautilus-python/extensions/
 
-# Redémarrer Nautilus
+# Restart Nautilus
 nautilus -q
 ```
 
-> ⚠️ Toujours supprimer le cache après installation ou mise à jour :
+> ⚠️ Always clear the cache after installing or updating an extension:
 > ```bash
 > rm -rf ~/.local/share/nautilus-python/extensions/__pycache__
 > ```
 
 ---
 
-## 🔍 Description des extensions
+## 🔍 Extensions in detail
 
 ### 🎨 Annotate Image — `annotate-image.py`
 
-Ouvre un éditeur d'annotations complet directement depuis le clic droit sur un PNG.
+Opens a full annotation editor directly from a right-click on any PNG file.
 
-**Outils disponibles :**
-- Rectangle, ellipse, flèche avec pointe
-- Texte libre positionnable
-- Choix de couleur, épaisseur (1→20) et opacité (10%→100%)
-- Undo / Redo illimité
-- Curseur crosshair professionnel
-- Enregistrement natif à la résolution originale
+**Available tools:**
+- Rectangle, ellipse, arrow (with arrowhead)
+- Free-form text, click-to-place
+- Color picker, stroke thickness (1→20) and opacity (10%→100%)
+- Unlimited undo / redo
+- Professional crosshair cursor
+- Native full-resolution export
 
-**Dépendances :** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-cairo`
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-cairo`
 
 ---
 
 ### 🗜️ Compress PDF — `compress-pdf.py`
 
-Réduit la taille des fichiers PDF via les niveaux d'optimisation Ghostscript.
+Reduces PDF file size using Ghostscript's built-in optimization presets.
 
-**Niveaux disponibles :**
-| Niveau | Usage |
+**Available levels:**
+| Level | Use case |
 |---|---|
-| Défaut | Optimisation standard |
-| Affichage écran | Résolution réduite pour lecture |
-| Basse qualité | Compression maximale |
-| Haute qualité | Impression laser |
-| Haute qualité (couleurs) | Impression prépresse |
+| Default | Balanced optimization |
+| Screen | Low resolution, screen reading |
+| Low Quality | Maximum compression |
+| High Quality | Laser printer output |
+| High Quality (Color) | Prepress / color-accurate printing |
 
-**Dépendances :** `python3-nautilus` `ghostscript` `python3-gi` `gir1.2-gtk-4.0`
+**Dependencies:** `python3-nautilus` `ghostscript` `python3-gi` `gir1.2-gtk-4.0`
 
 ---
 
 ### ⏱️ Media Duration Column — `duration-column.py`
 
-Ajoute une colonne **Durée** en vue liste pour les fichiers audio et vidéo. Utilise un cache local pour des performances optimales.
+Adds a **Duration** column in Nautilus list view for audio and video files. Uses a local cache for fast, lightweight performance.
 
-**Dépendances :** `python3-nautilus` `ffmpeg` `python3-gi`
+**Dependencies:** `python3-nautilus` `ffmpeg` `python3-gi`
 
 ---
 
 ### 👁️ Hidden Files Dimmer — `hidden-dim-all.py` / `hidden-dim-icon.py`
 
-Distingue visuellement les fichiers cachés (préfixe `.`) en réduisant leur opacité, facilitant la navigation dans le système de fichiers.
+Visually distinguishes hidden files (dot-prefixed) by reducing their opacity, making the filesystem easier to navigate at a glance.
 
-- `hidden-dim-all.py` — atténue icônes **et** labels
-- `hidden-dim-icon.py` — atténue uniquement les icônes
+- `hidden-dim-all.py` — dims both icons **and** labels
+- `hidden-dim-icon.py` — dims icons and thumbnails only
 
-**Dépendances :** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0`
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0`
 
 ---
 
 ### 🔗 Merge PDF — `merge-pdf.py`
 
-Fusionne plusieurs fichiers PDF en un seul document. Disponible uniquement quand **2 fichiers PDF ou plus** sont sélectionnés.
+Merges multiple PDF files into a single document. The option appears only when **2 or more PDF files** are selected.
 
-**Fonctionnalités :**
-- Dialog de réordonnancement avec boutons ↑ ↓
-- Nom de sortie suggéré automatiquement (`fusion.pdf`)
-- Barre de progression avec annulation
+**Features:**
+- Reorder dialog with ↑ ↓ buttons
+- Auto-suggested output filename (`merged.pdf`)
+- Progress bar with cancel support
 
-**Dépendances :** `python3-nautilus` `ghostscript` `python3-gi` `gir1.2-adw-1`
+**Dependencies:** `python3-nautilus` `ghostscript` `python3-gi` `gir1.2-adw-1`
 
 ---
 
 ### ✏️ Quick Edit — `nautilus_edit_ext.py`
 
-Ouvre les fichiers texte (`.py`, `.sh`, `.txt`, `.md`, etc.) directement dans un éditeur depuis le clic droit.
+Adds a context menu entry to open text-based files (`.py`, `.sh`, `.txt`, `.md`, etc.) directly in a text editor.
 
-**Dépendances :** `python3-nautilus` `python3-gi` `gedit` *(ou éditeur de votre choix)*
+**Dependencies:** `python3-nautilus` `python3-gi` `gedit` *(or your preferred editor)*
 
 ---
 
 ### 🔏 Watermark PDF — `watermark-pdf.py`
 
-Ajoute un filigrane textuel personnalisé à des fichiers PDF, conçu pour **protéger les documents sensibles** contre l'usurpation d'identité.
+Adds a customizable text watermark to PDF files, designed to **protect sensitive documents** against identity theft and fraud.
 
-**Options :**
-- Texte libre, taille de police, angle (-90°→+90°)
-- Opacité réglable, choix de couleur
-- Mode **centré** ou **diagonale répétée**
-- ✅ **Flatten (aplatissement)** — fusionne le filigrane dans une image raster infalsifiable, avec résolution réglable (72→300 DPI)
+**Options:**
+- Custom text, font size, angle (-90°→+90°)
+- Adjustable opacity and color
+- **Centered** or **diagonal repeat** layout
+- ✅ **Flatten** — rasterizes the entire page into an unforgeable image, with configurable resolution (72→300 DPI)
 
-> 💡 **Conseil sécurité :** Utilisez le flatten à 200 DPI puis compressez le résultat avec *Compress PDF* pour un document léger et sécurisé.
+> 💡 **Security tip:** Use flatten at 200 DPI, then run the result through *Compress PDF* for a document that is both tamper-proof and lightweight.
 
-**Dépendances :** `python3-nautilus` `ghostscript` `python3-pypdf` `python3-gi` `gir1.2-adw-1`
-
----
-
-## 🌍 Internationalisation
-
-Toutes les extensions détectent automatiquement la langue du système et sont disponibles en **français** et **anglais**.
+**Dependencies:** `python3-nautilus` `ghostscript` `python3-pypdf` `python3-gi` `gir1.2-adw-1`
 
 ---
 
-## 🖥️ Compatibilité
+## 🌍 Internationalization
 
-| Composant | Version requise |
+All extensions automatically detect the system language and are fully available in both **English** and **French**.
+
+---
+
+## 🖥️ Compatibility
+
+| Component | Required version |
 |---|---|
 | Nautilus | 43+ (API 4.0) |
 | Python | 3.10+ |
@@ -169,7 +169,7 @@ Toutes les extensions détectent automatiquement la langue du système et sont d
 
 ---
 
-## 📄 Licence
+## 📄 License
 
-Ce projet est distribué sous licence **GNU GPL v3**.
-Basé sur le script original *Compress PDF* de Ricardo Ferreira.
+This project is released under the **GNU GPL v3** license.  
+Based on the original *Compress PDF* bash script by Ricardo Ferreira.
