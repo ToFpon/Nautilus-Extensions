@@ -212,6 +212,7 @@ Available from right-clicking any folder **or** from the background context menu
 | Delete permanently | 🗑️ *(red)* | `Shift+Delete` |
 | Parent folder | ↑ | `Backspace` |
 | Refresh both panels | — | `F5` |
+| Open Dual Panel from Nautilus | — | `F3` |
 | Open terminal here | >_ | — |
 
 **Right-click context menu** — Open, Copy/Move to other panel, Rename, Move to trash, Delete permanently, New folder, New file, Terminal here

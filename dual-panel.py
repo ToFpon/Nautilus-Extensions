@@ -908,8 +908,60 @@ class DualPanelWindow(Adw.Window):
 # Nautilus extension
 # ---------------------------------------------------------------------------
 
+class DualPanelKeyHandler(GObject.GObject):
+    """Capture F3 dans toutes les fenêtres Nautilus via GtkEventControllerKey."""
+    __gtype_name__ = "DualPanelKeyHandler"
+
+    def __init__(self):
+        super().__init__()
+        self._hooked = set()   # fenêtres déjà hookées
+        # Vérifier périodiquement les nouvelles fenêtres
+        GLib.timeout_add(500, self._hook_windows)
+
+    def _hook_windows(self):
+        app = Gtk.Application.get_default()
+        if app is None:
+            return True
+        for win in app.get_windows():
+            wid = id(win)
+            if wid not in self._hooked:
+                self._attach_f3(win)
+                self._hooked.add(wid)
+        return True  # continuer
+
+    def _attach_f3(self, window):
+        ctrl = Gtk.ShortcutController()
+        ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
+
+        def on_f3(*_):
+            # Récupérer le dossier courant via le titre ou fallback home
+            path = os.path.expanduser("~")
+            app  = Gtk.Application.get_default()
+            if app:
+                win = app.get_active_window()
+                if win:
+                    # Nautilus expose le dossier courant dans le titre
+                    title = win.get_title() or ""
+                    candidate = os.path.expanduser(
+                        "~/" + title) if title else path
+                    if os.path.isdir(candidate):
+                        path = candidate
+            DualPanelWindow(path).present()
+            return True
+
+        trigger = Gtk.ShortcutTrigger.parse_string("F3")
+        action  = Gtk.CallbackAction.new(on_f3)
+        ctrl.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        window.add_controller(ctrl)
+
+
 class DualPanelExtension(GObject.GObject, Nautilus.MenuProvider):
     __gtype_name__ = "DualPanelExtension"
+
+    def __init__(self):
+        super().__init__()
+        # Démarrer le hook F3 dès que l'extension est chargée
+        self._key_handler = DualPanelKeyHandler()
 
     def get_file_items(self, files):
         # Afficher uniquement sur dossier ou espace vide
