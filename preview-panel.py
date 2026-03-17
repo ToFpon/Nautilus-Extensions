@@ -685,13 +685,21 @@ class PreviewPanel(Gtk.Window):
                 pic.set_vexpand(False)
                 pic.set_hexpand(False)
                 pic.set_size_request(-1, 260)
+                css = Gtk.CssProvider()
+                css.load_from_data(b".preview-white-bg { background-color: white; }")
+                Gtk.StyleContext.add_provider_for_display(
+                    Gdk.Display.get_default(), css,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                box_bg = Gtk.Box()
+                box_bg.add_css_class("preview-white-bg")
+                box_bg.append(pic)
                 frame = Gtk.Frame()
                 frame.set_margin_top(10)
                 frame.set_margin_start(10)
                 frame.set_margin_end(10)
                 frame.set_margin_bottom(6)
                 frame.set_hexpand(False)
-                frame.set_child(pic)
+                frame.set_child(box_bg)
                 self._content_box.append(frame)
             except Exception:
                 pass
