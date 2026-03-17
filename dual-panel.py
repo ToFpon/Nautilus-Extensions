@@ -12,7 +12,6 @@ import os
 import shutil
 import subprocess
 import locale
-import mimetypes
 import stat
 import time
 
@@ -147,19 +146,34 @@ def _fmt_perms(mode):
     return bits
 
 def _icon_for(path, is_dir):
-    if is_dir:
-        return "folder-symbolic"
-    mime, _ = mimetypes.guess_type(path)
-    if not mime:
-        return "text-x-generic-symbolic"
-    cat = mime.split("/")[0]
-    return {
-        "image":   "image-x-generic-symbolic",
-        "video":   "video-x-generic-symbolic",
-        "audio":   "audio-x-generic-symbolic",
-        "text":    "text-x-generic-symbolic",
-        "application": "application-x-executable-symbolic",
-    }.get(cat, "text-x-generic-symbolic")
+    """Retourne l'icône régulière du thème pour un fichier ou dossier."""
+    try:
+        if is_dir:
+            # Dossier spécial (Bureau, Musique...) ou dossier générique
+            gfile    = Gio.File.new_for_path(path)
+            info     = gfile.query_info("standard::icon", 0, None)
+            gicon    = info.get_icon()
+            if gicon:
+                theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+                names = gicon.get_names() if hasattr(gicon, "get_names") else []
+                for name in names:
+                    if theme.has_icon(name):
+                        return name
+            return "folder"
+        else:
+            # Fichier — détection via Gio content type
+            gfile = Gio.File.new_for_path(path)
+            info  = gfile.query_info("standard::icon,standard::content-type", 0, None)
+            gicon = info.get_icon()
+            if gicon:
+                theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+                names = gicon.get_names() if hasattr(gicon, "get_names") else []
+                for name in names:
+                    if theme.has_icon(name):
+                        return name
+            return "text-x-generic"
+    except Exception:
+        return "folder" if is_dir else "text-x-generic"
 
 
 # ---------------------------------------------------------------------------
@@ -367,11 +381,24 @@ class FilePanel(Gtk.Box):
         item.set_child(box)
 
     def _factory_name_bind(self, factory, item):
-        entry = item.get_item()
-        box   = item.get_child()
-        icon  = box.get_first_child()
-        lbl   = icon.get_next_sibling()
-        icon.set_from_icon_name(_icon_for(entry.path, entry.is_dir))
+        entry      = item.get_item()
+        box        = item.get_child()
+        icon       = box.get_first_child()
+        lbl        = icon.get_next_sibling()
+        icon_name  = _icon_for(entry.path, entry.is_dir)
+
+        # Chercher l'icône colorée (regular) dans le thème
+        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        if theme.has_icon(icon_name):
+            paintable = theme.lookup_icon(
+                icon_name, None, 24, 1,
+                Gtk.TextDirection.NONE,
+                Gtk.IconLookupFlags.FORCE_REGULAR,
+            )
+            icon.set_from_paintable(paintable)
+        else:
+            icon.set_from_icon_name(icon_name)
+
         lbl.set_text(entry.name)
         if entry.is_dir:
             lbl.add_css_class("bold")
