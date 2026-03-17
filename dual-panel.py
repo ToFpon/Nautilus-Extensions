@@ -26,7 +26,51 @@ from gi.repository import GObject, Gtk, Adw, Gdk, Gio, GLib, Pango, Nautilus
 # ---------------------------------------------------------------------------
 _lang = locale.getlocale()[0] or ""
 
-if _lang.startswith("fr"):
+if _lang.startswith("de"):
+    T = {
+        "menu_label":    "Im Dual Panel Modus öffnen",
+        "title":         "Dual Panel",
+        "copy":          "Kopieren →",
+        "copy_left":     "← Kopieren",
+        "move":          "Verschieben →",
+        "move_left":     "← Verschieben",
+        "new_folder":    "Neuer Ordner",
+        "new_file":      "Neue Datei",
+        "rename":        "Umbenennen",
+        "delete":        "Löschen",
+        "refresh":       "Neu Laden",
+        "go_up":         "Vorheriger Ordner",
+        "col_name":      "Name",
+        "col_size":      "Größe",
+        "col_date":      "Verändert",
+        "col_perms":     "Eigenschaften",
+        "confirm_del":   "{name} löschen?",
+        "confirm_del2":  "{n} Objekte löschen?",
+        "confirm_move":  "{name} nach {dst} verschieben?",
+        "confirm_move2": "{n} Objekte nach {dst} verschieben?",
+        "err_title":     "Fehler",
+        "new_folder_name": "Neuer Ordner",
+        "new_file_name":   "Neu.txt",
+        "enter_name":    "Name:",
+        "cancel":        "Abbrechen",
+        "ok":            "OK",
+        "delete_ok":     "Löschen",
+        "open_terminal": "In Terminal öffnen",
+        "delete_perm":   "Dauerhaft Löschen",
+        "confirm_perm":  "{name} wirklich dauerhaft löschen? Das kann nicht rückgängig gemacht werden!",
+        "confirm_perm2": "{n} Objekte wirklich dauerhaft löschen? Das kann nicht rückgängig gemacht werden!",
+        "context_open":        "Öffnen",
+        "context_copy":        "In anderes Panel kopieren",
+        "context_move":        "In anderes Panel verschieben",
+        "context_rename":      "Umbenennen",
+        "context_delete":      "In Papierkorb verschieben",
+        "context_delete_perm": "Dauerhaft Löschen",
+        "context_new_folder":  "Neuer Ordner",
+        "context_new_file":    "Neue Datei",
+        "context_terminal":    "In Terminal öffnen",
+    }
+
+elif _lang.startswith("fr"):
     T = {
         "menu_label":    "Ouvrir en double panneau",
         "title":         "Double Panneau",
@@ -927,6 +971,7 @@ class DualPanelWindow(Adw.Window):
             os.path.dirname(self._left._path)))
         add_shortcut("<Alt>Right",  lambda: self._right.navigate(
             os.path.dirname(self._right._path)))
+        add_shortcut("Escape",      lambda: self.close())
 
         self.add_controller(ctrl)
 

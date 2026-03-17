@@ -24,6 +24,7 @@
 | 📁 Folder Color Revival | `folder-color-revival.py` | Color & emblem tagging for folders |
 | 🗂️ Dual Panel | `dual-panel.py` | Double-pane file manager inside Nautilus |
 | 📦 Extract Here | `extract-here.py` | Fast extraction via 7zip with multi-volume & password support |
+| 🔍 Preview Panel | `preview-panel.py` | Dynamic file preview panel anchored to Nautilus |
 
 ---
 
@@ -41,7 +42,10 @@ sudo apt install \
   ffmpeg \
   python3-pypdf \
   python3-cairo \
-  p7zip-full
+  p7zip-full \
+  ffmpegthumbnailer \
+  wmctrl \
+  xdotool
 ```
 
 ### Installing an extension
@@ -250,6 +254,43 @@ Extracts archives directly from the right-click context menu using **7zip**, byp
 - Multi-archive selection — each group processed independently
 
 **Dependencies:** `python3-nautilus` `p7zip-full` `python3-gi` `gir1.2-adw-1`
+
+
+---
+
+### 🔍 Preview Panel — `preview-panel.py`
+
+Opens a dynamic preview panel that updates automatically as you select files in Nautilus. The panel anchors itself to the right of the Nautilus window.
+
+**Triggers:**
+- `F4` — open the panel (from any Nautilus window)
+- `Escape` — close the panel
+- Right-click → **Preview** on any file
+
+**Supported previews:**
+| Type | Method |
+|---|---|
+| Images (JPEG, PNG, WebP, SVG…) | GNOME thumbnail cache — instantaneous |
+| Video | `ffmpegthumbnailer` — generated once, cached |
+| PDF | GhostScript — first page, generated once, cached |
+| Text / Code | First 100 lines inline |
+
+**File metadata (via Tracker3 — near-instant):**
+- Size, MIME type, date modified, permissions
+- Dimensions (images & video)
+- Duration (video), page count (PDF)
+- Full EXIF data if available (camera, ISO, focal length, shutter speed…)
+- Title and subject (PDF)
+
+**Performance:**
+- GNOME thumbnail cache (`~/.cache/thumbnails/`) used as primary source — no file decoding needed for cached files
+- 250ms debounce — rapid navigation doesn't trigger unnecessary loads
+- LRU cache of 15 entries — revisiting a file is instantaneous
+- Tracker3 SPARQL for metadata — ~2ms per query
+
+**Requirements:** `xdotool` and `wmctrl` for window anchoring (X11 only). Works without them but panel opens centered instead of anchored.
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `ffmpegthumbnailer` `wmctrl` `xdotool` `ghostscript` *(optional, for PDF preview)*
 
 
 ---
