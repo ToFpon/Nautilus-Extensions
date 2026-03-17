@@ -23,6 +23,7 @@
 | 🔏 Watermark PDF | `watermark-pdf.py` | Secure watermarking with flattening |
 | 📁 Folder Color Revival | `folder-color-revival.py` | Color & emblem tagging for folders |
 | 🗂️ Dual Panel | `dual-panel.py` | Double-pane file manager inside Nautilus |
+| 📦 Extract Here | `extract-here.py` | Fast extraction via 7zip with multi-volume & password support |
 
 ---
 
@@ -39,7 +40,8 @@ sudo apt install \
   ghostscript \
   ffmpeg \
   python3-pypdf \
-  python3-cairo
+  python3-cairo \
+  p7zip-full
 ```
 
 ### Installing an extension
@@ -220,6 +222,34 @@ Available from right-clicking any folder **or** from the background context menu
 **Drag & drop** — drag files between panels to copy them instantly
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
+
+
+---
+
+### 📦 Extract Here — `extract-here.py`
+
+Extracts archives directly from the right-click context menu using **7zip**, bypassing Nautilus's slow built-in extractor. Especially effective with `.tar.bz2` archives, where 7zip's multi-threaded decompression is significantly faster than the native mono-threaded `tar`.
+
+**Supported formats:**
+`.7z` `.zip` `.rar` `.tar.gz` `.tar.bz2` `.tar.xz` `.tar.zst` `.tar.lz4` `.gz` `.bz2` `.xz` `.cab` `.iso` `.deb` `.rpm` `.dmg` `.wim` and more
+
+**Multi-volume support — auto-detected:**
+| Pattern | Example |
+|---|---|
+| 7z volumes | `archive.7z.001`, `.7z.002`… |
+| RAR parts | `archive.part1.rar`, `part2.rar`… |
+| Generic split | `archive.001`, `.002`… |
+| Split ZIP | `archive.z01`, `.z02`, `.zip` |
+| Old-school RAR | `archive.r00`, `.r01`, `.rar` |
+
+**Features:**
+- Password-protected archives — dialog with show/hide toggle
+- Real-time progress bar with percentage and timer
+- Double-layer archives (`.tar.bz2` etc.) extracted in two passes automatically
+- Output always in a dedicated subfolder named after the archive
+- Multi-archive selection — each group processed independently
+
+**Dependencies:** `python3-nautilus` `p7zip-full` `python3-gi` `gir1.2-adw-1`
 
 
 ---
