@@ -143,6 +143,23 @@ def _glob(stem, dirpath, suffix_re):
 
 
 # ---------------------------------------------------------------------------
+# Détection mot de passe
+# ---------------------------------------------------------------------------
+
+def _is_encrypted(path: str) -> bool:
+    """Teste si l'archive est protégée par mot de passe via 7z."""
+    try:
+        result = subprocess.run(
+            [SZ_BIN, "l", "-slt", path],
+            capture_output=True, text=True, timeout=5
+        )
+        output = result.stdout + result.stderr
+        return "Encrypted = +" in output or "Method = AES" in output
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Password dialog
 # ---------------------------------------------------------------------------
 
@@ -468,9 +485,7 @@ class ExtractHereExtension(GObject.GObject, Nautilus.MenuProvider):
         if os.path.exists(dst_dir):
             dst_dir += "_extracted"
 
-        def on_pwd(password):
-            if password is None:
-                return
+        def do_extract(password=""):
             prog = ExtractProgressDialog(
                 first_part=first,
                 dst_dir=dst_dir,
@@ -479,11 +494,17 @@ class ExtractHereExtension(GObject.GObject, Nautilus.MenuProvider):
             )
             prog.present()
 
-        ExtractDialog(first, parts, callback=on_pwd).present()
+        # Détecter si l'archive est protégée par mot de passe
+        if _is_encrypted(first):
+            def on_pwd(password):
+                if password is None:
+                    return
+                do_extract(password)
+            ExtractDialog(first, parts, callback=on_pwd).present()
+        else:
+            # Pas de mot de passe — extraction directe
+            do_extract()
 
     def _on_done(self, success, dst, groups, index):
-        if success:
-            Gtk.AlertDialog(
-                message=T["done_msg"].format(dst=dst)
-            ).show(_nautilus_window())
+        # Silence = succès, on continue simplement
         self._process_groups(groups, index + 1)
