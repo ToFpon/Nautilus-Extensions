@@ -44,6 +44,8 @@ sudo apt install \
   python3-cairo \
   p7zip-full \
   ffmpegthumbnailer \
+  poppler-utils \
+  libreoffice \
   wmctrl \
   xdotool
 ```
@@ -260,7 +262,7 @@ Extracts archives directly from the right-click context menu using **7zip**, byp
 
 ### 🔍 Preview Panel — `preview-panel.py`
 
-Opens a dynamic preview panel that updates automatically as you select files in Nautilus. The panel anchors itself to the right of the Nautilus window.
+Opens a dynamic preview panel that updates automatically as you select files in Nautilus. The panel anchors itself to the right of the Nautilus window (X11 only).
 
 **Triggers:**
 - `F4` — open the panel (from any Nautilus window)
@@ -268,30 +270,39 @@ Opens a dynamic preview panel that updates automatically as you select files in 
 - Right-click → **Preview** on any file
 
 **Supported previews:**
-| Type | Method |
-|---|---|
-| Images (JPEG, PNG, WebP, SVG…) | GNOME thumbnail cache — instantaneous |
-| Video | `ffmpegthumbnailer` — generated once, cached |
-| PDF | GhostScript — first page, generated once, cached |
-| Text / Code | First 100 lines inline |
+| Type | Method | Notes |
+|---|---|---|
+| Images (JPEG, PNG, WebP, SVG…) | GdkPixbuf direct | Full resolution, instant |
+| Video | `ffmpegthumbnailer` | Generated once, cached |
+| PDF | `pdftoppm` (Poppler) | Generated once, cached, same engine as Papers |
+| Office docs (docx, odt, xlsx, pptx…) | LibreOffice headless | Generated once, cached |
+| Text / Code | First 100 lines inline | |
 
 **File metadata (via Tracker3 — near-instant):**
 - Size, MIME type, date modified, permissions
 - Dimensions (images & video)
 - Duration (video), page count (PDF)
 - Full EXIF data if available (camera, ISO, focal length, shutter speed…)
-- Title and subject (PDF)
+- Title and subject (PDF, Office)
 
 **Performance:**
-- GNOME thumbnail cache (`~/.cache/thumbnails/`) used as primary source — no file decoding needed for cached files
+- Images loaded directly from source — full quality, no decoding overhead
+- GNOME thumbnail cache (`~/.cache/thumbnails/`) for PDF, Office and video — first load generates and caches, subsequent loads are instantaneous
 - 250ms debounce — rapid navigation doesn't trigger unnecessary loads
 - LRU cache of 15 entries — revisiting a file is instantaneous
 - Tracker3 SPARQL for metadata — ~2ms per query
 
-**Requirements:** `xdotool` and `wmctrl` for window anchoring (X11 only). Works without them but panel opens centered instead of anchored.
+**Window anchoring (X11 only):**
+Requires `xdotool` and `wmctrl`. The panel positions itself to the right of the Nautilus window automatically on open.
 
-**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `ffmpegthumbnailer` `wmctrl` `xdotool` `ghostscript` *(optional, for PDF preview)*
+**Known limitation:**
+GTK4 `4.14.5+ds-0ubuntu0.9` (Ubuntu 24.04) contains a bug that causes crashes with file properties and some image viewers. If you experience issues after a system update, downgrade to `4.14.5+ds-0ubuntu0.7` and hold the package:
+```bash
+sudo apt-mark hold libgtk-4-1 libgtk-4-common gir1.2-gtk-4.0 libgtk-4-bin libgtk-4-media-gstreamer
+```
+Similarly, `libexiv2-27 0.27.6-1ubuntu0.1` contains a memory corruption bug — hold `libexiv2-27` if you experience segfaults.
 
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
 
 ---
 
