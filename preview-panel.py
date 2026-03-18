@@ -16,6 +16,7 @@ import hashlib
 import mimetypes
 import subprocess
 import threading
+import tempfile
 import locale
 import urllib.parse
 
@@ -188,8 +189,9 @@ def _snap_window_to_nautilus(our_window):
         else:
             x = max(0, nau_x - panel_w + deco_w)
 
-        titlebar_h = 35
-        y = max(0, nau_y - titlebar_h)
+        # nau_y=0 signifie Nautilus tout en haut — on laisse y=0
+        # Le décalage vers le bas vient des décorations wmctrl
+        y = nau_y + 5
         h = nau_h
 
         import sys
@@ -366,6 +368,37 @@ def _generate_thumbnail(path, mime):
         pass
 
     return dst if os.path.exists(dst) and os.path.getsize(dst) > 0 else None
+
+def _build_pdf_direct(path, size=380):
+    """Génère un PNG du PDF directement via GS — sans passer par le cache GNOME."""
+    import sys
+    # Forcer le chemin absolu — shutil.which peut échouer dans le contexte Nautilus
+    for gs in ["/usr/bin/gs", "/usr/bin/ghostscript"]:
+        if os.path.isfile(gs):
+            break
+    else:
+        print("[preview] GS non trouvé", file=sys.stderr)
+        return None
+    try:
+        fd, tmp = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        result = subprocess.run(
+            [gs, "-sDEVICE=png16m", "-dNOPAUSE", "-dBATCH", "-dQUIET",
+             "-dFirstPage=1", "-dLastPage=1",
+             f"-dDEVICEWIDTH={size}", f"-dDEVICEHEIGHT={size}",
+             "-dFitPage", "-dBackgroundColor=16#e0e0e0",
+             f"-sOutputFile={tmp}", path],
+            capture_output=True, timeout=15
+        )
+        print(f"[preview] GS rc={result.rc if hasattr(result,'rc') else result.returncode} tmp={tmp} size={os.path.getsize(tmp) if os.path.exists(tmp) else 'ABSENT'}", file=sys.stderr)
+        if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+            return tmp
+        try: os.remove(tmp)
+        except: pass
+    except Exception as e:
+        print(f"[preview] GS error: {e}", file=sys.stderr)
+    return None
+
 
 def _get_or_create_thumbnail(path, mime):
     """Retourne le thumbnail (depuis cache ou généré). Rapide si déjà en cache."""
@@ -555,7 +588,7 @@ class PreviewPanel(Gtk.Window):
             preview_path, rows = self._cache[path]
             GObject.idle_add(
                 self._apply_result, self._loading_token,
-                preview_path, rows, path)
+                preview_path, None, rows, path)
             return
 
         # Debounce 250ms
@@ -592,9 +625,12 @@ class PreviewPanel(Gtk.Window):
         ext  = os.path.splitext(path)[1].lower()
 
         # 1. Thumbnail (cache GNOME ou génération)
+        # Pour les PDFs : génération directe via GS sans passer par le cache
+        # (le cache GNOME cause des problèmes de transparence sur Nautilus 46)
         thumb_path = None
-        if cat in ("image", "video") or mime == "application/pdf" or \
-                ext in (".svg", ".pdf"):
+        if mime == "application/pdf" or ext == ".pdf":
+            thumb_path = _build_pdf_direct(path)
+        elif cat in ("image", "video") or ext == ".svg":
             thumb_path = _get_or_create_thumbnail(path, mime)
 
         # 2. Text preview
@@ -657,9 +693,9 @@ class PreviewPanel(Gtk.Window):
         cache_val = (thumb_path, text_widget_data, rows)
         GObject.idle_add(
             self._apply_result, token, thumb_path,
-            text_widget_data, rows, path)
+            text_widget_data, rows, path, mime, ext)
 
-    def _apply_result(self, token, thumb_path, text_data, rows, path=None):
+    def _apply_result(self, token, thumb_path, text_data, rows, path=None, mime="", ext=""):
         if token != self._loading_token:
             return False
 
@@ -685,21 +721,27 @@ class PreviewPanel(Gtk.Window):
                 pic.set_vexpand(False)
                 pic.set_hexpand(False)
                 pic.set_size_request(-1, 260)
-                css = Gtk.CssProvider()
-                css.load_from_data(b".preview-white-bg { background-color: white; }")
-                Gtk.StyleContext.add_provider_for_display(
-                    Gdk.Display.get_default(), css,
-                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-                box_bg = Gtk.Box()
-                box_bg.add_css_class("preview-white-bg")
-                box_bg.append(pic)
                 frame = Gtk.Frame()
                 frame.set_margin_top(10)
                 frame.set_margin_start(10)
                 frame.set_margin_end(10)
                 frame.set_margin_bottom(6)
                 frame.set_hexpand(False)
-                frame.set_child(box_bg)
+
+                # Fond blanc uniquement pour les PDFs
+                if mime == "application/pdf" or ext == ".pdf":
+                    css = Gtk.CssProvider()
+                    css.load_from_data(b".preview-pdf-bg { background-color: #e0e0e0; }")
+                    Gtk.StyleContext.add_provider_for_display(
+                        Gdk.Display.get_default(), css,
+                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                    box_bg = Gtk.Box()
+                    box_bg.add_css_class("preview-pdf-bg")
+                    box_bg.append(pic)
+                    frame.set_child(box_bg)
+                else:
+                    frame.set_child(pic)
+
                 self._content_box.append(frame)
             except Exception:
                 pass
