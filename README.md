@@ -25,6 +25,7 @@
 | 🗂️ Dual Panel | `dual-panel.py` | Double-pane file manager inside Nautilus |
 | 📦 Extract Here | `extract-here.py` | Fast extraction via 7zip with multi-volume & password support |
 | 🔍 Preview Panel | `preview-panel.py` | Dynamic file preview panel anchored to Nautilus |
+| ⚙️ Extensions Manager | `extensions-manager.py` | Enable/disable extensions on the fly from Nautilus |
 
 ---
 
@@ -309,6 +310,41 @@ sudo apt-mark hold libgtk-4-1 libgtk-4-common gir1.2-gtk-4.0 libgtk-4-bin libgtk
 Similarly, `libexiv2-27 0.27.6-1ubuntu0.1` contains a memory corruption bug — hold `libexiv2-27` if you experience segfaults.
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
+
+---
+
+### ⚙️ Extensions Manager — `extensions-manager.py`
+
+Manage your Nautilus Python extensions directly from Nautilus — enable, disable, and restart without touching the terminal.
+
+**Trigger:**
+- Right-click on background → **Manage extensions**
+
+**Features:**
+- Lists all **active** extensions with Python file icon
+- Lists all **disabled** extensions (greyed out)
+- One-click **enable/disable** — moves files between `extensions/` and `extensions/disabled/`
+- **Restart Nautilus** button to apply changes (launches new instance before killing the current one)
+- Automatically excludes system extensions (`nautilus-gsconnect.py`) and itself
+
+**Why this matters:**
+Each loaded extension consumes memory and CPU. Extensions with background timers (`preview-panel.py`, `dual-panel.py`) are especially resource-intensive. Best practice:
+
+| Extension | Load impact | Recommendation |
+|---|---|---|
+| `annotate-image.py` | ✅ Minimal | Keep active |
+| `extract-here.py` | ✅ Minimal | Keep active |
+| `folder-color-revival.py` | ✅ Minimal | Keep active |
+| `compress-pdf.py` | ✅ Minimal | Keep active |
+| `merge-pdf.py` | ✅ Minimal | Keep active |
+| `watermark-pdf.py` | ✅ Minimal | Keep active |
+| `dual-panel.py` | ⚠️ Background timer | Enable on demand |
+| `preview-panel.py` | ⚠️ Background timer | Enable on demand |
+
+**Disabled extensions** are stored in `~/.local/share/nautilus-python/extensions/disabled/` and can be re-enabled at any time.
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
+
 
 ---
 
