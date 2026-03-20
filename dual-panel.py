@@ -487,14 +487,64 @@ class FilePanel(Gtk.Box):
         self.refresh()
 
     def refresh(self):
+        import threading
+        path = self._path
         self._store.remove_all()
-        try:
-            for name in os.listdir(self._path):
-                full = os.path.join(self._path, name)
-                self._store.append(FileEntry(full))
-        except PermissionError:
-            pass
-        self._apply_sort()
+
+        # Spinner pendant le chargement
+        if not hasattr(self, "_spinner"):
+            self._spinner = Gtk.Spinner()
+            self._spinner.set_halign(Gtk.Align.CENTER)
+            self._spinner.set_valign(Gtk.Align.CENTER)
+            self._spinner.set_size_request(32, 32)
+        self._spinner.start()
+        # Insérer le spinner comme overlay sur le scroll
+        if hasattr(self, "_scroll") and self._spinner.get_parent() is None:
+            self._overlay = Gtk.Overlay()
+            child = self._scroll.get_child()
+            self._scroll.set_child(None)
+            self._overlay.set_child(child)
+            self._overlay.add_overlay(self._spinner)
+            self._scroll.set_child(self._overlay)
+
+        def _work():
+            entries = []
+            try:
+                items = sorted(os.scandir(path), key=lambda e: (
+                    not e.is_dir(follow_symlinks=False),
+                    e.name.startswith("."),
+                    e.name.lower()
+                ))
+                for it in items:
+                    entries.append(FileEntry(it.path))
+            except PermissionError:
+                pass
+            GLib.idle_add(self._load_entries, path, entries)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _load_entries(self, path, entries):
+        if path != self._path:
+            return False
+        self._pending = entries[:]
+        self._load_page()
+        return False
+
+    def _load_page(self):
+        if not hasattr(self, "_pending") or not self._pending:
+            # Tout chargé — arrêter le spinner
+            if hasattr(self, "_spinner"):
+                self._spinner.stop()
+            return
+        batch = self._pending[:100]
+        self._pending = self._pending[100:]
+        n = self._store.get_n_items()
+        self._store.splice(n, 0, batch)
+        if self._pending:
+            GLib.timeout_add(8, self._load_page)
+        else:
+            if hasattr(self, "_spinner"):
+                self._spinner.stop()
 
     def _apply_sort(self):
         def compare(a, b, _):
