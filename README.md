@@ -196,40 +196,46 @@ DEBUG=1 nautilus --no-desktop 2>&1 | grep "folder-color"
 
 ### 🗂️ Dual Panel — `dual-panel.py`
 
-Opens a fully-featured **double-pane file manager** directly from Nautilus, similar to Nemo or Thunar's split view — a feature Nautilus once had and many users still miss.
+A full-featured dual-panel file manager window launched from Nautilus, with a Nautilus-style sidebar for quick navigation.
 
-Available from right-clicking any folder **or** from the background context menu.
+**Triggers:**
+- `F3` — open from any Nautilus window
+- Right-click on a folder → **Open in Dual Panel**
+- Right-click on background → **Open in Dual Panel**
 
-**Features:**
-- Side-by-side dual panel with independent navigation
-- Editable address bar in each panel
-- Resizable divider between panels
-- Sortable columns: Name, Size, Date modified, Permissions
-- Sort order matches Nautilus: normal folders → hidden folders → normal files → hidden files
-- Folder and file icons by MIME type
+**Layout:**
+- **Left sidebar** — Nautilus-style: Favorites (XDG special folders), Bookmarks (from `~/.config/gtk-3.0/bookmarks`), Mounted volumes (GIO)
+- **Left panel** — source panel
+- **Right panel** — destination panel
+
+**Columns:** Name (expandable) · Size · Modified · Permissions (fixed width)
 
 **File operations:**
-| Action | Button | Keyboard |
-|---|---|---|
-| Copy to other panel | Copy → / ← Copy | `Ctrl+C` |
-| Move to other panel | Move → / ← Move | `Ctrl+X` |
-| New folder | 📁 | `Ctrl+N` |
-| New file | 📄 | — |
-| Rename | ✏️ | `F2` |
-| Move to trash | 🗑️ | `Delete` |
-| Delete permanently | 🗑️ *(red)* | `Shift+Delete` |
-| Parent folder | ↑ | `Backspace` |
-| Refresh both panels | — | `F5` |
-| Open Dual Panel from Nautilus | — | `F3` |
-| Open terminal here | >_ | — |
+- Copy → / ← Copy between panels
+- Move → / ← Move between panels
+- New folder, New file
+- Rename (F2)
+- Delete to trash (Delete), Permanent delete (Shift+Delete)
+- Open in terminal
 
-**Right-click context menu** — Open, Copy/Move to other panel, Rename, Move to trash, Delete permanently, New folder, New file, Terminal here
+**Keyboard shortcuts:**
+| Key | Action |
+|---|---|
+| `F3` | Open Dual Panel |
+| `F5` | Refresh both panels |
+| `F2` | Rename selected |
+| `Delete` | Move to trash |
+| `Shift+Delete` | Delete permanently |
+| `Ctrl+C` | Copy to other panel |
+| `Ctrl+X` | Move to other panel |
+| `Ctrl+N` | New folder |
+| `BackSpace` | Go to parent folder |
+| `Alt+←/→` | Navigate left/right panel |
+| `Escape` | Close window |
 
-**Drag & drop** — drag files between panels to copy them instantly
+**Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
-
-
 ---
 
 ### 📦 Extract Here — `extract-here.py`

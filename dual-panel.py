@@ -335,10 +335,10 @@ class FilePanel(Gtk.Box):
         self._col_view = col_view
 
         # Colonnes
-        self._add_column(col_view, T["col_name"],  "name",  320, self._factory_name_setup,  self._factory_name_bind)
+        self._add_column(col_view, T["col_name"],  "name",  260, self._factory_name_setup,  self._factory_name_bind, expand=True)
         self._add_column(col_view, T["col_size"],  "size",  90,  self._factory_size_setup,  self._factory_size_bind)
         self._add_column(col_view, T["col_date"],  "mtime", 140, self._factory_date_setup,  self._factory_date_bind)
-        self._add_column(col_view, T["col_perms"], "perms", 90,  self._factory_perms_setup, self._factory_perms_bind)
+        self._add_column(col_view, T["col_perms"], "perms", 105,  self._factory_perms_setup, self._factory_perms_bind)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
@@ -355,13 +355,14 @@ class FilePanel(Gtk.Box):
         self._setup_context_menu()
         self._setup_keyboard()
 
-    def _add_column(self, cv, title, sort_key, width, setup_fn, bind_fn):
+    def _add_column(self, cv, title, sort_key, width, setup_fn, bind_fn, expand=False):
         factory = Gtk.SignalListItemFactory()
         factory.connect("setup", setup_fn)
         factory.connect("bind",  bind_fn)
         col = Gtk.ColumnViewColumn(title=title, factory=factory)
         col.set_fixed_width(width)
         col.set_resizable(True)
+        col.set_expand(expand)
         col.sort_key = sort_key
         header_btn = Gtk.Button(label=title)
         header_btn.connect("clicked", self._on_sort_click, sort_key)
@@ -921,21 +922,148 @@ class FilePanel(Gtk.Box):
 # Main dual-panel window
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Sidebar (bookmarks GIO comme Nautilus)
+# ---------------------------------------------------------------------------
+
+class SidebarPanel(Gtk.Box):
+    __gtype_name__ = "DualPanelSidebar"
+
+    def __init__(self, on_select):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_size_request(180, -1)
+        self.set_vexpand(True)
+        self._on_select = on_select
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_overlay_scrolling(False)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        self._box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        scroll.set_child(self._box)
+        self.append(scroll)
+
+        self._populate()
+
+    def _btn(self, label, path, icon_name=None):
+        row = Gtk.Button()
+        row.set_has_frame(False)
+        row.add_css_class("flat")
+
+        inner = Gtk.Box(spacing=8)
+        inner.set_margin_start(8)
+        inner.set_margin_end(8)
+        inner.set_margin_top(4)
+        inner.set_margin_bottom(4)
+
+        icon = Gtk.Image()
+        icon.set_pixel_size(16)
+        if icon_name:
+            paint = None
+            theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+            if theme.has_icon(icon_name):
+                paint = theme.lookup_icon(icon_name, None, 16, 1,
+                    Gtk.TextDirection.LTR, Gtk.IconLookupFlags.FORCE_REGULAR)
+            if paint:
+                icon.set_from_paintable(paint)
+            else:
+                icon.set_from_icon_name(icon_name)
+
+        lbl = Gtk.Label(label=label)
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_hexpand(True)
+
+        inner.append(icon)
+        inner.append(lbl)
+        row.set_child(inner)
+        row.connect("clicked", lambda _: self._on_select(path))
+        return row
+
+    def _section_label(self, text):
+        lbl = Gtk.Label(label=text)
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_margin_start(10)
+        lbl.set_margin_top(8)
+        lbl.set_margin_bottom(2)
+        lbl.add_css_class("dim-label")
+        lbl.add_css_class("caption")
+        return lbl
+
+    def _populate(self):
+        # Dossiers spéciaux XDG
+        specials = [
+            (GLib.get_home_dir(),                    "user-home-symbolic",        os.path.basename(GLib.get_home_dir()) or "Home"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP),    "user-desktop-symbolic",     "Bureau"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS),  "folder-documents-symbolic", "Documents"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD),   "folder-download-symbolic",  "Téléchargements"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC),      "folder-music-symbolic",     "Musique"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES),   "folder-pictures-symbolic",  "Images"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS),     "folder-videos-symbolic",    "Vidéos"),
+        ]
+        self._box.append(self._section_label("Favoris"))
+        for path, icon, name in specials:
+            if path and os.path.isdir(path):
+                self._box.append(self._btn(name, path, icon))
+
+        # Corbeille
+        trash_btn = self._btn("Corbeille", os.path.expanduser("~/.local/share/Trash/files"), "user-trash-symbolic")
+        self._box.append(trash_btn)
+
+        # Bookmarks GTK (~/.config/gtk-3.0/bookmarks)
+        bm_file = os.path.expanduser("~/.config/gtk-3.0/bookmarks")
+        bookmarks = []
+        if os.path.exists(bm_file):
+            with open(bm_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(" ", 1)
+                    uri   = parts[0]
+                    if uri.startswith("file://"):
+                        path  = uri[7:]
+                        label = parts[1] if len(parts) > 1 else os.path.basename(path)
+                        if os.path.isdir(path):
+                            bookmarks.append((path, label))
+
+        if bookmarks:
+            self._box.append(Gtk.Separator())
+            self._box.append(self._section_label("Signets"))
+            for path, label in bookmarks:
+                self._box.append(self._btn(label, path, "folder-symbolic"))
+
+        # Volumes/montages GIO
+        vm = Gio.VolumeMonitor.get()
+        mounts = vm.get_mounts()
+        if mounts:
+            self._box.append(Gtk.Separator())
+            self._box.append(self._section_label("Emplacements"))
+            for mount in mounts:
+                root = mount.get_root()
+                if root:
+                    path = root.get_path()
+                    if path and os.path.isdir(path):
+                        icon_g = mount.get_icon()
+                        iname  = "drive-harddisk-symbolic"
+                        if icon_g and hasattr(icon_g, "get_names"):
+                            names = icon_g.get_names()
+                            if names:
+                                iname = names[0]
+                        self._box.append(self._btn(mount.get_name(), path, iname))
+
+
 class DualPanelWindow(Adw.Window):
     __gtype_name__ = "DualPanelWindow"
 
     def __init__(self, start_path: str):
         super().__init__(title=T["title"])
-        self.set_default_size(1400, 800)
+        self.set_default_size(1500, 800)
         self.set_transient_for(_nautilus_window())
 
         tv = Adw.ToolbarView()
         tv.add_top_bar(Adw.HeaderBar())
-
-        # Deux panneaux côte à côte
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(700)
-        paned.set_wide_handle(True)
 
         self._left  = FilePanel(start_path)
         self._right = FilePanel(start_path)
@@ -948,10 +1076,26 @@ class DualPanelWindow(Adw.Window):
         self._left._move_btn.set_label(T["move"])
         self._right._move_btn.set_label(T["move_left"])
 
-        paned.set_start_child(self._left)
-        paned.set_end_child(self._right)
+        # Sidebar à gauche
+        self._sidebar = SidebarPanel(self._on_sidebar_select)
 
-        tv.set_content(paned)
+        # Deux panneaux côte à côte
+        paned_panels = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned_panels.set_position(650)
+        paned_panels.set_wide_handle(True)
+        paned_panels.set_start_child(self._left)
+        paned_panels.set_end_child(self._right)
+
+        # Sidebar + panneaux
+        paned_main = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned_main.set_position(185)
+        paned_main.set_wide_handle(True)
+        paned_main.set_resize_start_child(False)
+        paned_main.set_shrink_start_child(False)
+        paned_main.set_start_child(self._sidebar)
+        paned_main.set_end_child(paned_panels)
+
+        tv.set_content(paned_main)
         self.set_content(tv)
 
         # Raccourcis clavier
@@ -974,6 +1118,10 @@ class DualPanelWindow(Adw.Window):
         add_shortcut("Escape",      lambda: self.close())
 
         self.add_controller(ctrl)
+
+    def _on_sidebar_select(self, path):
+        """Clic sur la sidebar → naviguer dans le panneau actif (gauche par défaut)."""
+        self._left.navigate(path)
 
 
 # ---------------------------------------------------------------------------
