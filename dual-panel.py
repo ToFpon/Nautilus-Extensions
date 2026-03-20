@@ -56,6 +56,10 @@ if _lang.startswith("de"):
         "ok":            "OK",
         "delete_ok":     "Löschen",
         "open_terminal": "In Terminal öffnen",
+        "sidebar_favorites": "Favoriten",
+        "sidebar_trash":     "Papierkorb",
+        "sidebar_bookmarks": "Lesezeichen",
+        "sidebar_places":    "Orte",
         "delete_perm":   "Dauerhaft Löschen",
         "confirm_perm":  "{name} wirklich dauerhaft löschen? Das kann nicht rückgängig gemacht werden!",
         "confirm_perm2": "{n} Objekte wirklich dauerhaft löschen? Das kann nicht rückgängig gemacht werden!",
@@ -100,6 +104,10 @@ elif _lang.startswith("fr"):
         "ok":            "OK",
         "delete_ok":     "Supprimer",
         "open_terminal":  "Terminal ici",
+        "sidebar_favorites": "Favoris",
+        "sidebar_trash":     "Corbeille",
+        "sidebar_bookmarks": "Signets",
+        "sidebar_places":    "Emplacements",
         "delete_perm":    "Supprimer définitivement",
         "confirm_perm":   "Supprimer DÉFINITIVEMENT {name} ? Cette action est irréversible.",
         "confirm_perm2":  "Supprimer DÉFINITIVEMENT {n} éléments ? Cette action est irréversible.",
@@ -143,6 +151,10 @@ else:
         "ok":            "OK",
         "delete_ok":     "Delete",
         "open_terminal":  "Terminal here",
+        "sidebar_favorites": "Favorites",
+        "sidebar_trash":     "Trash",
+        "sidebar_bookmarks": "Bookmarks",
+        "sidebar_places":    "Places",
         "delete_perm":    "Delete permanently",
         "confirm_perm":   "Permanently DELETE {name}? This cannot be undone.",
         "confirm_perm2":  "Permanently DELETE {n} items? This cannot be undone.",
@@ -1043,22 +1055,44 @@ class SidebarPanel(Gtk.Box):
 
     def _populate(self):
         # Dossiers spéciaux XDG
+        # Noms XDG natifs — traduits automatiquement selon la locale
+        _home = GLib.get_home_dir()
         specials = [
-            (GLib.get_home_dir(),                    "user-home-symbolic",        os.path.basename(GLib.get_home_dir()) or "Home"),
-            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP),    "user-desktop-symbolic",     "Bureau"),
-            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS),  "folder-documents-symbolic", "Documents"),
-            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD),   "folder-download-symbolic",  "Téléchargements"),
-            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC),      "folder-music-symbolic",     "Musique"),
-            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES),   "folder-pictures-symbolic",  "Images"),
-            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS),     "folder-videos-symbolic",    "Vidéos"),
+            (_home,
+             "user-home-symbolic",
+             os.path.basename(_home) or "Home"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP),
+             "user-desktop-symbolic",
+             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP) and
+             os.path.basename(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP)) or "Desktop"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS),
+             "folder-documents-symbolic",
+             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) and
+             os.path.basename(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)) or "Documents"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD),
+             "folder-download-symbolic",
+             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) and
+             os.path.basename(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)) or "Downloads"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC),
+             "folder-music-symbolic",
+             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC) and
+             os.path.basename(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC)) or "Music"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES),
+             "folder-pictures-symbolic",
+             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) and
+             os.path.basename(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)) or "Pictures"),
+            (GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS),
+             "folder-videos-symbolic",
+             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS) and
+             os.path.basename(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS)) or "Videos"),
         ]
-        self._box.append(self._section_label("Favoris"))
+        self._box.append(self._section_label(T["sidebar_favorites"]))
         for path, icon, name in specials:
             if path and os.path.isdir(path):
                 self._box.append(self._btn(name, path, icon))
 
         # Corbeille
-        trash_btn = self._btn("Corbeille", os.path.expanduser("~/.local/share/Trash/files"), "user-trash-symbolic")
+        trash_btn = self._btn(T["sidebar_trash"], os.path.expanduser("~/.local/share/Trash/files"), "user-trash-symbolic")
         self._box.append(trash_btn)
 
         # Bookmarks GTK (~/.config/gtk-3.0/bookmarks)
@@ -1080,7 +1114,7 @@ class SidebarPanel(Gtk.Box):
 
         if bookmarks:
             self._box.append(Gtk.Separator())
-            self._box.append(self._section_label("Signets"))
+            self._box.append(self._section_label(T["sidebar_bookmarks"]))
             for path, label in bookmarks:
                 self._box.append(self._btn(label, path, "folder-symbolic"))
 
@@ -1089,7 +1123,7 @@ class SidebarPanel(Gtk.Box):
         mounts = vm.get_mounts()
         if mounts:
             self._box.append(Gtk.Separator())
-            self._box.append(self._section_label("Emplacements"))
+            self._box.append(self._section_label(T["sidebar_places"]))
             for mount in mounts:
                 root = mount.get_root()
                 if root:
