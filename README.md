@@ -194,7 +194,6 @@ DEBUG=1 nautilus --no-desktop 2>&1 | grep "folder-color"
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0`
 
-
 ---
 
 ### 🗂️ Dual Panel — `dual-panel.py`
@@ -239,6 +238,7 @@ A full-featured dual-panel file manager window launched from Nautilus, with a Na
 **Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
+
 ---
 
 ### 📦 Extract Here — `extract-here.py`
@@ -263,9 +263,8 @@ Fast archive extraction directly from Nautilus via right-click.
 - All other formats extracted via `7z`
 - Extraction destination in same folder as archive
 
-**Dependencies:**
+**Dependencies:** `python3-nautilus` `p7zip-full` `unrar`
 
-`python3-nautilus` `p7zip-full` `unrar`
 ---
 
 ### 🔍 Preview Panel — `preview-panel.py`
@@ -310,9 +309,7 @@ sudo apt-mark hold libgtk-4-1 libgtk-4-common gir1.2-gtk-4.0 libgtk-4-bin libgtk
 ```
 Similarly, `libexiv2-27 0.27.6-1ubuntu0.1` contains a memory corruption bug — hold `libexiv2-27` if you experience segfaults.
 
-**Dependencies:**
-
-`python3-nautilus` `python3-gi` `gir1.2-adw-1`
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
 `ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
 
 ---
