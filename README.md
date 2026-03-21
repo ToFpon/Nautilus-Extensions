@@ -26,6 +26,7 @@
 | 📦 Extract Here | `extract-here.py` | Fast extraction (7z + unrar) with multi-volume & password support |
 | 🔍 Preview Panel | `preview-panel.py` | Dynamic file preview panel anchored to Nautilus |
 | ⚙️ Extensions Manager | `extensions-manager.py` | Enable/disable extensions on the fly from Nautilus |
+| 🗜️ Archive Browser | `archive-browser.py` | Browse and extract archive contents (zip, 7z, rar) |
 
 ---
 
@@ -44,6 +45,7 @@ sudo apt install \
   python3-pypdf \
   python3-cairo \
   p7zip-full \
+  unrar \
   ffmpegthumbnailer \
   poppler-utils \
   libreoffice \
@@ -237,7 +239,6 @@ A full-featured dual-panel file manager window launched from Nautilus, with a Na
 **Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
-
 ---
 
 ### 📦 Extract Here — `extract-here.py`
@@ -262,8 +263,9 @@ Fast archive extraction directly from Nautilus via right-click.
 - All other formats extracted via `7z`
 - Extraction destination in same folder as archive
 
-**Dependencies:** `python3-nautilus` `p7zip-full` `unrar`
+**Dependencies:**
 
+`python3-nautilus` `p7zip-full` `unrar`
 ---
 
 ### 🔍 Preview Panel — `preview-panel.py`
@@ -308,7 +310,9 @@ sudo apt-mark hold libgtk-4-1 libgtk-4-common gir1.2-gtk-4.0 libgtk-4-bin libgtk
 ```
 Similarly, `libexiv2-27 0.27.6-1ubuntu0.1` contains a memory corruption bug — hold `libexiv2-27` if you experience segfaults.
 
-**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
+**Dependencies:**
+
+`python3-nautilus` `python3-gi` `gir1.2-adw-1`
 `ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
 
 ---
@@ -340,10 +344,39 @@ Each loaded extension consumes memory and CPU. Extensions with background timers
 | `watermark-pdf.py` | ✅ Minimal | Keep active |
 | `dual-panel.py` | ⚠️ Background timer | Enable on demand |
 | `preview-panel.py` | ⚠️ Background timer | Enable on demand |
+| `archive-browser.py` | ✅ Minimal | Keep active |
 
 **Disabled extensions** are stored in `~/.local/share/nautilus-python/extensions/disabled/` and can be re-enabled at any time.
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
+
+
+---
+
+### 🗜️ Archive Browser — `archive-browser.py`
+
+Browse and selectively extract archive contents directly from Nautilus — a file-roller like experience.
+
+**Triggers:**
+- Right-click on an archive → **Browse archive**
+- `F7` — reopen last browsed archive
+
+**Supported formats:**
+- **zip, 7z, tar, gz, bz2, xz, cab, iso, deb, rpm** — via `7z`
+- **rar, r00, part1.rar…** — via `unrar` (full RAR5 support)
+
+**Features:**
+- 📂 Folder tree with **collapse/expand** — all subfolders collapsed by default, click to expand
+- 🔍 **Live filter** — search files by name
+- 📦 **Extract all** — extracts everything to destination folder
+- ✅ **Extract selection** — extracts only selected files
+- 🖱️ **Double-click** on a file — extracts and opens with default application
+- 📁 **Destination chooser** — pick any folder as extraction target
+- After extraction, destination folder opens automatically in Nautilus
+
+**Dependencies:**
+
+`python3-nautilus` `python3-gi` `gir1.2-adw-1` `p7zip-full` `unrar`
 
 
 ---
