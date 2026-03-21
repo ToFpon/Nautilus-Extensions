@@ -241,30 +241,27 @@ A full-featured dual-panel file manager window launched from Nautilus, with a Na
 
 ### 📦 Extract Here — `extract-here.py`
 
-Extracts archives directly from the right-click context menu using **7zip**, bypassing Nautilus's slow built-in extractor. Especially effective with `.tar.bz2` archives, where 7zip's multi-threaded decompression is significantly faster than the native mono-threaded `tar`.
+Fast archive extraction directly from Nautilus via right-click.
+
+**Trigger:**
+- Right-click on an archive → **Extract here…**
+- Right-click on a multi-volume archive → **Extract volume here…**
 
 **Supported formats:**
-`.7z` `.zip` `.rar` `.tar.gz` `.tar.bz2` `.tar.xz` `.tar.zst` `.tar.lz4` `.gz` `.bz2` `.xz` `.cab` `.iso` `.deb` `.rpm` `.dmg` `.wim` and more
+`.7z` `.zip` `.tar.*` `.gz` `.bz2` `.xz` `.zst` `.cab` `.iso` `.deb` `.rpm` `.dmg` `.wim`
+`.rar` `.r00` `.r01`… (via `unrar` — full RAR5 support)
 
-**Multi-volume support — auto-detected:**
-| Pattern | Example |
-|---|---|
-| 7z volumes | `archive.7z.001`, `.7z.002`… |
-| RAR parts | `archive.part1.rar`, `part2.rar`… |
-| Generic split | `archive.001`, `.002`… |
-| Split ZIP | `archive.z01`, `.z02`, `.zip` |
-| Old-school RAR | `archive.r00`, `.r01`, `.rar` |
+**Multi-volume support:**
+`.7z.001` `.part1.rar` `.001` `.z01` `.r00` — automatically detects and extracts the full set
 
 **Features:**
-- Password-protected archives — dialog with show/hide toggle
-- Real-time progress bar with percentage and timer
-- Double-layer archives (`.tar.bz2` etc.) extracted in two passes automatically
-- Output always in a dedicated subfolder named after the archive
-- Multi-archive selection — each group processed independently
+- Password detection via `7z l -slt -p""` — dialog only shown when archive is actually encrypted
+- Real-time progress bar (percentage for 7z, file count for RAR)
+- RAR archives extracted via `unrar` (supports RAR5 compression method `m5`)
+- All other formats extracted via `7z`
+- Extraction destination in same folder as archive
 
-**Dependencies:** `python3-nautilus` `p7zip-full` `python3-gi` `gir1.2-adw-1`
-
-
+**Dependencies:** `python3-nautilus` `p7zip-full` `unrar`
 ---
 
 ### 🔍 Preview Panel — `preview-panel.py`

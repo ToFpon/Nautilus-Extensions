@@ -30,9 +30,9 @@ _lang = locale.getlocale()[0] or ""
 
 if _lang.startswith("fr"):
     T = {
-        "menu_label":     "Extraire avec 7zip…",
-        "menu_label_vol": "Extraire le volume avec 7zip…",
-        "title":          "Extraction 7zip",
+        "menu_label":     "Extraire ici…",
+        "menu_label_vol": "Extraire le volume ici…",
+        "title":          "Extraction",
         "extracting":     "Extraction en cours…",
         "done_msg":       "Extrait dans : {dst}",
         "err_7z":         "p7zip est introuvable.\nInstallez-le avec :\nsudo apt install p7zip-full",
@@ -45,9 +45,9 @@ if _lang.startswith("fr"):
     }
 else:
     T = {
-        "menu_label":     "Extract with 7zip…",
-        "menu_label_vol": "Extract volume with 7zip…",
-        "title":          "7zip Extraction",
+        "menu_label":     "Extract here…",
+        "menu_label_vol": "Extract volume here…",
+        "title":          "Extraction",
         "extracting":     "Extracting…",
         "done_msg":       "Extracted to: {dst}",
         "err_7z":         "p7zip not found.\nInstall it with:\nsudo apt install p7zip-full",
@@ -59,7 +59,8 @@ else:
         "ok":             "Extract",
     }
 
-SZ_BIN = shutil.which("7z") or shutil.which("7za") or "/usr/bin/7z"
+SZ_BIN   = shutil.which("7z") or shutil.which("7za") or "/usr/bin/7z"
+UNRAR_BIN = shutil.which("unrar") or "/usr/bin/unrar"
 
 DOUBLE_EXTS = {
     ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
@@ -147,14 +148,25 @@ def _glob(stem, dirpath, suffix_re):
 # ---------------------------------------------------------------------------
 
 def _is_encrypted(path: str) -> bool:
-    """Teste si l'archive est protégée par mot de passe via 7z."""
+    """Teste si l'archive est protégée par mot de passe via 7z.
+    Utilise -p"" pour éviter le blocage sur les archives chiffrées."""
     try:
         result = subprocess.run(
-            [SZ_BIN, "l", "-slt", path],
+            [SZ_BIN, "l", "-slt", '-p""', path],
             capture_output=True, text=True, timeout=5
         )
         output = result.stdout + result.stderr
-        return "Encrypted = +" in output or "Method = AES" in output
+        # Seul "Encrypted = +" indique un chiffrement réel
+        # "Encrypted = -" signifie non chiffré
+        if "Encrypted = +" in output:
+            return True
+        # 7z chiffré — "Cannot open encrypted archive"
+        if "Cannot open encrypted archive" in output or            "Wrong password" in output or            "wrong password" in output.lower():
+            return True
+        # Méthode AES explicite
+        if "Method = AES" in output:
+            return True
+        return False
     except Exception:
         return False
 
@@ -331,8 +343,7 @@ class ExtractProgressDialog(Adw.Window):
         cmd = [SZ_BIN, "x", archive, f"-o{out_dir}", "-y", "-bsp1", "-bso0"]
         if password:
             cmd.append(f"-p{password}")
-        else:
-            cmd.append("-p")
+        # Ne pas ajouter -p sans mot de passe — cause des problèmes avec les RAR
 
         self._process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -371,7 +382,12 @@ class ExtractProgressDialog(Adw.Window):
                 tmp_dir = tempfile.mkdtemp(
                     dir=os.path.dirname(self._dst_dir), prefix=".7z_tmp_")
                 try:
-                    rc, err = self._run_7z(self._first_part, tmp_dir, self._password)
+                    ext2 = os.path.splitext(self._first_part)[1].lower()
+                    is_rar2 = ext2 in (".rar", ".r00", ".r01", ".r02") or                               re.search(r"\.part\d+\.rar$", self._first_part, re.IGNORECASE)
+                    if is_rar2 and os.path.isfile(UNRAR_BIN):
+                        rc, err = self._run_unrar(self._first_part, tmp_dir, self._password)
+                    else:
+                        rc, err = self._run_7z(self._first_part, tmp_dir, self._password)
                     if rc != 0:
                         raise RuntimeError(err)
                     tar_files = [os.path.join(tmp_dir, f)
@@ -386,7 +402,12 @@ class ExtractProgressDialog(Adw.Window):
                 finally:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
             else:
-                rc, err = self._run_7z(self._first_part, self._dst_dir, self._password)
+                ext = os.path.splitext(self._first_part)[1].lower()
+                is_rar = ext in (".rar", ".r00", ".r01", ".r02") or                          re.search(r"\.part\d+\.rar$", self._first_part, re.IGNORECASE)
+                if is_rar and os.path.isfile(UNRAR_BIN):
+                    rc, err = self._run_unrar(self._first_part, self._dst_dir, self._password)
+                else:
+                    rc, err = self._run_7z(self._first_part, self._dst_dir, self._password)
                 if rc != 0:
                     raise RuntimeError(err)
 
@@ -405,6 +426,53 @@ class ExtractProgressDialog(Adw.Window):
             return
 
         GObject.idle_add(self._on_finish, True)
+
+    def _run_unrar(self, archive, out_dir, password):
+        """Extrait un RAR via unrar — supporte RAR5.
+        Progression basée sur le nombre de fichiers extraits."""
+        # Compter le total de fichiers dans l'archive
+        total = 0
+        try:
+            r = subprocess.run(
+                [UNRAR_BIN, "l", archive],
+                capture_output=True, text=True, timeout=5)
+            for line in r.stdout.splitlines():
+                if line.strip().startswith("Extracting") or                    (len(line) > 50 and not line.startswith(" ---")):
+                    total += 1
+        except Exception:
+            pass
+        if total == 0:
+            total = 100  # fallback
+
+        cmd = [UNRAR_BIN, "x", "-y", archive, out_dir + "/"]
+        if password:
+            cmd.insert(2, f"-p{password}")
+        else:
+            cmd.insert(2, "-p-")
+
+        self._process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True)
+
+        extracted = 0
+        stderr_lines = []
+
+        def _parse_stdout():
+            nonlocal extracted
+            for line in self._process.stdout:
+                line = line.strip()
+                if line.startswith("Extracting") and "OK" in line:
+                    extracted += 1
+                    pct = min(int(extracted / total * 100), 99)
+                    GObject.idle_add(self._set_progress, pct)
+
+        t = threading.Thread(target=_parse_stdout, daemon=True)
+        t.start()
+        stderr_out = self._process.stderr.read()
+        t.join()
+        self._process.wait()
+        GObject.idle_add(self._set_progress, 100)
+        return self._process.returncode, stderr_out
 
     def _on_error(self, msg):
         Gtk.AlertDialog(message=msg).show(_nautilus_window())
