@@ -217,6 +217,7 @@ A full-featured dual-panel file manager window launched from Nautilus, with a Na
 **File operations:**
 - Copy → / ← Copy between panels
 - Move → / ← Move between panels
+- Drag & Drop between panels
 - New folder, New file
 - Rename (F2)
 - Delete to trash (Delete), Permanent delete (Shift+Delete)
