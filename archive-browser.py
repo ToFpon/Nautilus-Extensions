@@ -85,7 +85,7 @@ with libarchive.file_reader(sys.argv[1]) as a:
 """
             r = subprocess.run(
                 ["python3", "-c", script, path],
-                capture_output=True, text=True, timeout=None)
+                capture_output=True, text=True, timeout=15)
             for line in r.stdout.splitlines():
                 parts = line.split("\t", 2)
                 if len(parts) == 3:
@@ -143,14 +143,44 @@ with libarchive.file_reader(sys.argv[1]) as a:
             pass
     return entries
 
-def _extract(archive, names, dst):
-    """Extraction via 7z/unrar — fiable pour tous les cas."""
+def _extract(archive, names, dst, progress_cb=None):
+    """Extraction via 7z/unrar avec progression optionnelle."""
     os.makedirs(dst, exist_ok=True)
     if _is_rar(archive):
+        # unrar affiche "xx%" sur chaque ligne
         cmd = [UNRAR_BIN, "x", "-y", "-p-", archive] + names + [dst + "/"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
+        for line in proc.stdout:
+            if progress_cb:
+                line = line.strip()
+                # unrar affiche des % comme "  3%"
+                m = re.search("([0-9]+)%", line)
+                if m:
+                    progress_cb(int(m.group(1)) / 100.0)
+        proc.wait()
     else:
-        cmd = [SZ_BIN, "x", archive, f"-o{dst}", "-y"] + names
-    subprocess.run(cmd, capture_output=True, timeout=300)
+        # 7z avec -bsp1 affiche "xx%" sur stdout
+        cmd = [SZ_BIN, "x", archive, f"-o{dst}", "-y",
+               "-bsp1", "-bso0"] + names
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        BS = bytes([8])  # backspace — séparateur 7z
+        buf = b""
+        while True:
+            ch = proc.stdout.read(1)
+            if not ch:
+                break
+            if ch == BS:
+                seg = buf.decode("utf-8", errors="replace").strip()
+                buf = b""
+                if seg:
+                    m = re.search("([0-9]{1,3}) *%", seg)
+                    if m and progress_cb:
+                        progress_cb(int(m.group(1)) / 100.0)
+            else:
+                buf += ch
+        proc.wait()
 
 def _fmt_size(s):
     try:
@@ -440,20 +470,13 @@ class ArchiveBrowserWindow(Adw.Window):
         bar.append(btn_all)
         bar.append(btn_sel)
 
-        # Progress
-        self._prog = Gtk.ProgressBar()
-        self._prog.set_visible(False)
-        self._prog.set_margin_start(8); self._prog.set_margin_end(8)
-        self._prog.set_margin_bottom(6)
-
-        # Layout
+        # Layout panneau gauche
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content.append(self._search)
         content.append(Gtk.Separator())
         content.append(scroll)
         content.append(Gtk.Separator())
         content.append(bar)
-        content.append(self._prog)
 
         # Panel droit filesystem
         self._fs_panel = FilePanel()
@@ -466,7 +489,20 @@ class ArchiveBrowserWindow(Adw.Window):
         paned.set_start_child(content)
         paned.set_end_child(self._fs_panel)
 
-        tv.set_content(paned)
+        # Barre de progression — toute la largeur en bas
+        self._prog = Gtk.ProgressBar()
+        self._prog.set_visible(False)
+        self._prog.set_margin_start(8)
+        self._prog.set_margin_end(8)
+        self._prog.set_margin_top(4)
+        self._prog.set_margin_bottom(4)
+
+        # Layout principal
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main.append(paned)
+        main.append(self._prog)
+
+        tv.set_content(main)
         self.set_content(tv)
 
         # CSS
@@ -702,6 +738,26 @@ class ArchiveBrowserWindow(Adw.Window):
                 names.append(self._store.get_item(i).name)
         return names
 
+    def _prog_start(self):
+        """Pulse pour le DnD — on ne connaît pas le % d'avance."""
+        self._prog.set_visible(True)
+        self._prog.pulse()
+        if not hasattr(self, "_pulse_active") or not self._pulse_active:
+            self._pulse_active = True
+            GLib.timeout_add(80, self._pulse_tick)
+        return False
+
+    def _pulse_tick(self):
+        if self._prog.get_visible():
+            self._prog.pulse()
+            return True
+        self._pulse_active = False
+        return False
+
+    def _prog_stop(self):
+        self._prog.set_visible(False)
+        return False
+
     def _extract_all(self, _):
         self._do_extract([])
 
@@ -713,22 +769,19 @@ class ArchiveBrowserWindow(Adw.Window):
     def _do_extract(self, names):
         dst = self._fs_panel.path
         self._prog.set_visible(True)
-        self._prog.pulse()
+        self._prog.set_fraction(0.0)
 
-        def _pulse():
-            if self._prog.get_visible():
-                self._prog.pulse()
-                return True
-            return False
-        GLib.timeout_add(100, _pulse)
+        def _on_progress(fraction):
+            GLib.idle_add(self._prog.set_fraction, fraction)
 
         def _work():
-            _extract(self._archive, names, dst)
+            _extract(self._archive, names, dst,
+                     progress_cb=_on_progress)
             GLib.idle_add(self._extract_done, dst)
         threading.Thread(target=_work, daemon=True).start()
 
     def _extract_done(self, dst):
-        self._prog.set_visible(False)
+        self._prog_stop()
         self._fs_panel.refresh()
         return False
 
@@ -742,11 +795,18 @@ class ArchiveBrowserWindow(Adw.Window):
         names = self._get_selected_names()
         if not names:
             return None
+        # Vérifier si déjà en cache
+        all_cached = all(
+            n in self._cache_files and os.path.exists(self._cache_files[n])
+            for n in names)
+        if not all_cached:
+            GLib.idle_add(self._prog_start)
         files = []
         for name in names:
             path = self._ensure_extracted(name)
             if path and os.path.exists(path):
                 files.append(Gio.File.new_for_path(path))
+        GLib.idle_add(self._prog_stop)
         if not files:
             return None
         return Gdk.ContentProvider.new_for_value(
