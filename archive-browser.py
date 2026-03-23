@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # NAME: Archive Browser – Nautilus Python Extension
-# DESC: Browse and extract archive contents with drag & drop
-# REQUIRES: python3-nautilus, python3-gi, gir1.2-adw-1, p7zip-full, unrar
+# REQUIRES: python3-nautilus, python3-gi, p7zip-full, unrar
 # INSTALL:
 #   cp archive-browser.py ~/.local/share/nautilus-python/extensions/
 #   rm -rf ~/.local/share/nautilus-python/extensions/__pycache__
@@ -23,221 +22,307 @@ gi.require_version("Adw", "1")
 gi.require_version("Nautilus", "4.0")
 from gi.repository import GObject, Gtk, Adw, Gdk, Gio, GLib, Nautilus, Pango
 
-# ---------------------------------------------------------------------------
-# i18n
-# ---------------------------------------------------------------------------
-_lang = locale.getlocale()[0] or ""
+SZ_BIN    = shutil.which("7z")    or "/usr/bin/7z"
+UNRAR_BIN = shutil.which("unrar") or "/usr/bin/unrar"
 
+ARCHIVE_EXTS = {".zip", ".7z", ".tar", ".gz", ".bz2", ".xz",
+                ".rar", ".tgz", ".tbz2", ".cab", ".iso"}
+
+_lang = locale.getlocale()[0] or ""
 if _lang.startswith("fr"):
     T = {
-        "title":         "Navigateur d'archives",
-        "menu_label":    "Parcourir l'archive",
-        "col_name":      "Nom",
-        "col_size":      "Taille",
-        "col_date":      "Date",
-        "col_type":      "Type",
-        "extract_all":   "Tout extraire",
-        "extract_sel":   "Extraire la sélection",
-        "dest_label":    "Destination :",
-        "browse":        "Parcourir…",
-        "loading":       "Chargement de l'archive…",
-        "extracting":    "Extraction…",
-        "done":          "Extraction terminée",
-        "err_title":     "Erreur",
-        "err_open":      "Impossible d'ouvrir l'archive",
-        "drop_hint":     "Glissez les fichiers vers le gestionnaire de fichiers",
-        "no_selection":  "Aucun fichier sélectionné",
-        "cancel":        "Annuler",
-        "ok":            "OK",
-        "folder":        "Dossier",
-        "file":          "Fichier",
+        "menu_label":   "Parcourir l'archive",
+        "title":        "Navigateur d'archives",
+        "filter":       "Filtrer…",
+        "extract_all":  "Tout extraire",
+        "extract_sel":  "Extraire la sélection",
+        "go_up":        "Dossier parent",
+        "refresh":      "Actualiser",
     }
 else:
     T = {
-        "title":         "Archive Browser",
-        "menu_label":    "Browse archive",
-        "col_name":      "Name",
-        "col_size":      "Size",
-        "col_date":      "Date",
-        "col_type":      "Type",
-        "extract_all":   "Extract all",
-        "extract_sel":   "Extract selection",
-        "dest_label":    "Destination:",
-        "browse":        "Browse…",
-        "loading":       "Loading archive…",
-        "extracting":    "Extracting…",
-        "done":          "Extraction complete",
-        "err_title":     "Error",
-        "err_open":      "Cannot open archive",
-        "drop_hint":     "Drag files to your file manager",
-        "no_selection":  "No file selected",
-        "cancel":        "Cancel",
-        "ok":            "OK",
-        "folder":        "Folder",
-        "file":          "File",
+        "menu_label":   T["menu_label"],
+        "title":        "Archive Browser",
+        "filter":       "Filter…",
+        "extract_all":  "Extract all",
+        "extract_sel":  "Extract selection",
+        "go_up":        "Parent folder",
+        "refresh":      "Refresh",
     }
-
-SZ_BIN    = shutil.which("7z") or "/usr/bin/7z"
-UNRAR_BIN = shutil.which("unrar") or "/usr/bin/unrar"
-
-ARCHIVE_EXTS = {
-    ".7z", ".zip", ".rar", ".tar", ".gz", ".bz2", ".xz",
-    ".zst", ".cab", ".iso", ".deb", ".rpm", ".tar.gz",
-    ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tbz2",
-}
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _nautilus_window():
-    app = Gtk.Application.get_default()
-    if app is None:
-        return None
-    return app.get_active_window()
-
-def _fmt_size(n):
-    try:
-        n = int(n)
-        for u in ["B", "KB", "MB", "GB", "TB"]:
-            if n < 1024:
-                return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
-            n /= 1024
-    except Exception:
-        pass
-    return str(n)
-
 def _is_rar(path):
-    ext    = os.path.splitext(path)[1].lower()
-    result = ext in (".rar", ".r00", ".r01", ".r02") or \
-             bool(re.search(r"\.part\d+\.rar$", path, re.IGNORECASE))
-    with open("/tmp/archive_debug.txt", "a") as f:
-        f.write(f"_is_rar({path}) ext={ext} → {result}\n")
-    return result
+    ext = os.path.splitext(path)[1].lower()
+    return ext in (".rar", ".r00", ".r01") or \
+           bool(re.search(r"\.part\d+\.rar$", path, re.I))
 
-# ---------------------------------------------------------------------------
-# Archive entry model
-# ---------------------------------------------------------------------------
-
-class ArchiveEntry(GObject.Object):
-    __gtype_name__ = "ABArchiveEntry"
-
-    def __init__(self, path, size, date, is_dir):
-        super().__init__()
-        self.path   = path          # chemin interne dans l'archive
-        self.name   = os.path.basename(path.rstrip("/"))
-        self.size   = size
-        self.date   = date
-        self.is_dir = is_dir
-        self.depth  = path.rstrip("/").count("/")
-
-# ---------------------------------------------------------------------------
-# Archive listing
-# ---------------------------------------------------------------------------
-
-def _list_archive(archive_path):
-    """Liste le contenu d'une archive. Retourne liste de ArchiveEntry."""
+def _list_archive(path):
+    """Retourne une liste de (name, size, is_dir)."""
     entries = []
-
-    if _is_rar(archive_path):
-        # unrar v — Format: attr size packed ratio date time checksum name
+    if _is_rar(path):
         try:
-            result = subprocess.run(
-                [UNRAR_BIN, "v", archive_path],
-                capture_output=True, text=True, timeout=10)
+            r = subprocess.run([UNRAR_BIN, "v", path],
+                               capture_output=True, text=True, timeout=10)
             in_list = False
-            for line in result.stdout.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("---"):
+            for line in r.stdout.splitlines():
+                if line.strip().startswith("---"):
                     in_list = not in_list
                     continue
-                if not in_list or not stripped:
+                if not in_list or not line.strip():
                     continue
-                parts = stripped.split(None, 7)
+                parts = line.strip().split(None, 7)
                 if len(parts) < 8:
                     continue
                 attr   = parts[0]
                 size   = parts[1]
-                date   = parts[4] + " " + parts[5]
                 name   = parts[7].strip()
-                is_dir = "D" in attr.upper() or name.endswith("/")
+                is_dir = "D" in attr.upper()
                 if name:
-                    entries.append(ArchiveEntry(name, size, date, is_dir))
-        except Exception as e:
-            with open("/tmp/archive_debug.txt", "a") as f:
-                f.write(f"unrar error: {e}\n")
+                    entries.append((name, size, is_dir))
+        except Exception:
+            pass
     else:
-        # 7z l — format tabulaire
-        # Après la ligne "---...", chaque ligne est:
-        # date  time  attr  size  compressed  name
         try:
-            result = subprocess.run(
-                [SZ_BIN, "l", archive_path],
-                capture_output=True, text=True, timeout=10)
+            r = subprocess.run([SZ_BIN, "l", path],
+                               capture_output=True, text=True, timeout=10)
             in_list = False
-            for line in result.stdout.splitlines():
-                # Ligne séparatrice "---..."
+            for line in r.stdout.splitlines():
                 if re.match(r"^-{10,}", line.strip()):
-                    if in_list:
-                        break  # 2ème séparateur = fin de liste
+                    if in_list: break
                     in_list = True
                     continue
                 if not in_list or len(line) < 53:
                     continue
-                try:
-                    date   = line[0:10] + " " + line[11:19]
-                    attr   = line[20:25].strip()
-                    size   = line[25:53].split()[0] if line[25:53].split() else "0"
-                    name   = line[53:].strip()
-                    is_dir = "D" in attr or name.endswith("/")
-                    if name:
-                        entries.append(ArchiveEntry(name, size, date, is_dir))
-                except Exception:
-                    continue
-        except Exception as e:
-            import sys; print(f"[archive] 7z error: {e}", file=sys.stderr)
-    # Trier : dossiers d'abord, puis fichiers, ordre alphabétique
-    entries.sort(key=lambda e: (not e.is_dir, e.path.lower()))
+                attr   = line[20:25].strip()
+                size   = line[25:53].split()[0] if line[25:53].split() else "0"
+                name   = line[53:].strip()
+                is_dir = "D" in attr
+                if name:
+                    entries.append((name, size, is_dir))
+        except Exception:
+            pass
+    # Trier : dossiers d'abord
+    entries.sort(key=lambda e: (not e[2], e[0].lower()))
     return entries
 
-# ---------------------------------------------------------------------------
-# Extraction
-# ---------------------------------------------------------------------------
-
-def _extract_entries(archive_path, entries, dst_dir, password="", callback=None):
-    """Extrait des entrées spécifiques (ou toutes si entries=[])."""
-    os.makedirs(dst_dir, exist_ok=True)
-
-    if _is_rar(archive_path):
-        cmd = [UNRAR_BIN, "x", "-y"]
-        if password:
-            cmd.append(f"-p{password}")
-        else:
-            cmd.append("-p-")
-        cmd.append(archive_path)
-        if entries:
-            for e in entries:
-                cmd.append(e.path)
-        cmd.append(dst_dir + "/")
+def _extract(archive, names, dst):
+    os.makedirs(dst, exist_ok=True)
+    if _is_rar(archive):
+        cmd = [UNRAR_BIN, "x", "-y", "-p-", archive] + names + [dst + "/"]
     else:
-        cmd = [SZ_BIN, "x", archive_path, f"-o{dst_dir}", "-y"]
-        if password:
-            cmd.append(f"-p{password}")
-        if entries:
-            for e in entries:
-                cmd.append(e.path)
+        cmd = [SZ_BIN, "x", archive, f"-o{dst}", "-y"] + names
+    subprocess.run(cmd, capture_output=True, timeout=60)
 
+def _fmt_size(s):
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=300)
-        ok   = proc.returncode == 0
+        n = int(s)
+        for u in ["B","KB","MB","GB"]:
+            if n < 1024: return f"{n:.0f} {u}" if u=="B" else f"{n:.1f} {u}"
+            n //= 1024
     except Exception:
-        ok = False
+        pass
+    return s
 
-    if callback:
-        GLib.idle_add(callback, ok)
+import stat as _stat
+import time as _time
 
 # ---------------------------------------------------------------------------
-# Archive Browser Window
+# Entry models
+# ---------------------------------------------------------------------------
+
+class Entry(GObject.Object):
+    __gtype_name__ = "ABEntry"
+    def __init__(self, name, size, is_dir, depth=0):
+        super().__init__()
+        self.name   = name
+        self.size   = size
+        self.is_dir = is_dir
+        self.depth  = depth
+        # Chemin complet dans l'archive (pour collapse)
+        self.full_path = name
+
+class FSEntry(GObject.Object):
+    __gtype_name__ = "ABFSEntry"
+    def __init__(self, path):
+        super().__init__()
+        self.path   = path
+        self.name   = os.path.basename(path)
+        try:
+            s = os.stat(path)
+            self.is_dir = _stat.S_ISDIR(s.st_mode)
+            self.size   = s.st_size
+            self.mtime  = s.st_mtime
+        except Exception:
+            self.is_dir = os.path.isdir(path)
+            self.size   = 0
+            self.mtime  = 0
+
+# ---------------------------------------------------------------------------
+# File Panel (destination)
+# ---------------------------------------------------------------------------
+
+def _icon_for(path, is_dir):
+    try:
+        info = Gio.File.new_for_path(path).query_info("standard::icon", 0, None)
+        g    = info.get_icon()
+        if g and hasattr(g, "get_names"):
+            n = g.get_names()
+            if n: return n[0]
+    except Exception:
+        pass
+    return "folder" if is_dir else "text-x-generic"
+
+def _icon_paintable(name):
+    theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+    if theme.has_icon(name):
+        return theme.lookup_icon(name, None, 16, 1,
+            Gtk.TextDirection.LTR, Gtk.IconLookupFlags.FORCE_REGULAR)
+    return None
+
+class FilePanel(Gtk.Box):
+    __gtype_name__ = "ABFilePanel"
+
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        self._path = os.path.expanduser("~")
+        # navigate() sera appelé après init si besoin
+
+        # Header
+        hbar = Gtk.Box(spacing=4)
+        hbar.set_margin_start(4); hbar.set_margin_end(4)
+        hbar.set_margin_top(4);   hbar.set_margin_bottom(4)
+
+        up_btn = Gtk.Button(icon_name="go-up-symbolic")
+        up_btn.set_has_frame(False)
+        up_btn.connect("clicked", lambda _: self.navigate(os.path.dirname(self._path)))
+
+        self._path_lbl = Gtk.Label()
+        self._path_lbl.set_halign(Gtk.Align.START)
+        self._path_lbl.set_hexpand(True)
+        self._path_lbl.set_ellipsize(Pango.EllipsizeMode.START)
+        self._path_lbl.add_css_class("dim-label")
+
+        ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        ref_btn.set_has_frame(False)
+        ref_btn.connect("clicked", lambda _: self.refresh())
+
+        hbar.append(up_btn)
+        hbar.append(self._path_lbl)
+        hbar.append(ref_btn)
+        self.append(hbar)
+        self.append(Gtk.Separator())
+
+        # Store + ListView
+        self._store = Gio.ListStore(item_type=FSEntry)
+        self._sel   = Gtk.MultiSelection.new(self._store)
+
+        fct = Gtk.SignalListItemFactory()
+        fct.connect("setup", self._setup)
+        fct.connect("bind",  self._bind)
+
+        self._lv = Gtk.ListView(model=self._sel, factory=fct)
+        self._lv.set_vexpand(True)
+        self._lv.add_css_class("navigation-sidebar")
+        self._lv.connect("activate", self._on_activate)
+
+
+        # Drop target
+        drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        drop.connect("drop", self._on_drop)
+        self._lv.add_controller(drop)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_overlay_scrolling(False)
+        scroll.set_child(self._lv)
+        self.append(scroll)
+
+        self.navigate(self._path)
+
+    @property
+    def path(self):
+        return self._path
+
+    def navigate(self, path):
+        if not path or not os.path.isdir(path):
+            return
+        self._path = path
+        self._path_lbl.set_text(path)
+        self.refresh()
+
+    def refresh(self):
+        self._store.remove_all()
+        try:
+            items = sorted(os.scandir(self._path), key=lambda e: (
+                not e.is_dir(follow_symlinks=False),
+                e.name.startswith("."),
+                e.name.lower()))
+            for it in items:
+                self._store.append(FSEntry(it.path))
+        except Exception:
+            pass
+
+    def _setup(self, fct, item):
+        box  = Gtk.Box(spacing=6)
+        box.set_margin_start(4); box.set_margin_end(4)
+        box.set_margin_top(2);   box.set_margin_bottom(2)
+        icon = Gtk.Image(); icon.set_pixel_size(16)
+        lbl  = Gtk.Label(); lbl.set_halign(Gtk.Align.START)
+        lbl.set_hexpand(True); lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        size = Gtk.Label(); size.set_halign(Gtk.Align.END)
+        size.set_width_chars(9); size.add_css_class("dim-label")
+        box.append(icon); box.append(lbl); box.append(size)
+        item.set_child(box)
+
+    def _bind(self, fct, item):
+        e    = item.get_item()
+        box  = item.get_child()
+        icon = box.get_first_child()
+        lbl  = icon.get_next_sibling()
+        size = lbl.get_next_sibling()
+        paint = _icon_paintable(_icon_for(e.path, e.is_dir))
+        if paint: icon.set_from_paintable(paint)
+        else:     icon.set_from_icon_name(_icon_for(e.path, e.is_dir))
+        lbl.set_text(e.name)
+        if e.is_dir: lbl.add_css_class("bold")
+        else:        lbl.remove_css_class("bold")
+        size.set_text("—" if e.is_dir else _fmt_size(e.size))
+
+    def _on_activate(self, lv, pos):
+        e = self._store.get_item(pos)
+        if e.is_dir:
+            self.navigate(e.path)
+        else:
+            try:
+                Gio.AppInfo.launch_default_for_uri(
+                    Gio.File.new_for_path(e.path).get_uri(), None)
+            except Exception:
+                pass
+
+    def _on_drop(self, target, value, x, y):
+        """Reçoit les fichiers droppés — les copie dans ce dossier."""
+        if isinstance(value, Gdk.FileList):
+            for gfile in value.get_files():
+                src  = gfile.get_path()
+                if not src: continue
+                dst  = os.path.join(self._path, os.path.basename(src))
+                try:
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dst)
+                except Exception:
+                    pass
+            self.refresh()
+        return True
+
+# ---------------------------------------------------------------------------
+# Window
 # ---------------------------------------------------------------------------
 
 class ArchiveBrowserWindow(Adw.Window):
@@ -245,161 +330,100 @@ class ArchiveBrowserWindow(Adw.Window):
 
     def __init__(self, archive_path):
         super().__init__()
-        self.set_default_size(1000, 700)
+        self.set_default_size(1000, 650)
         self.set_resizable(True)
-        self.set_transient_for(_nautilus_window())
-
-        self._archive_path = archive_path
-        self._entries      = []
-        self._password     = ""
+        self._archive  = archive_path
+        self._all      = []
+        self._tmp      = None
+        self._tmp_ready = False
 
         self.set_title(f"{T['title']} — {os.path.basename(archive_path)}")
 
         tv = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.set_decoration_layout(":close")
-        title = Gtk.Label()
-        title.set_markup(f"<b>{GLib.markup_escape_text(os.path.basename(archive_path))}</b>")
-        title.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        title.set_max_width_chars(50)
-        header.set_title_widget(title)
-        tv.add_top_bar(header)
+        hdr = Adw.HeaderBar()
+        hdr.set_decoration_layout(":close")
+        hdr.set_title_widget(Gtk.Label(label=os.path.basename(archive_path)))
+        tv.add_top_bar(hdr)
 
-        # Layout principal : liste archive | panneau destination
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(460)
-        paned.set_wide_handle(True)
+        # Recherche
+        self._search = Gtk.SearchEntry()
+        self._search.set_placeholder_text(T["filter"])
+        self._search.set_margin_start(8); self._search.set_margin_end(8)
+        self._search.set_margin_top(6);   self._search.set_margin_bottom(6)
+        self._search.connect("search-changed", self._on_search)
 
-        # --- Panneau gauche : contenu archive ---
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        # Store + ListView
+        self._store = Gio.ListStore(item_type=Entry)
+        self._sel   = Gtk.MultiSelection.new(self._store)
 
-        # Barre de recherche
-        search = Gtk.SearchEntry()
-        search.set_placeholder_text("Filtrer…")
-        search.set_margin_start(8)
-        search.set_margin_end(8)
-        search.set_margin_top(6)
-        search.set_margin_bottom(6)
-        search.connect("search-changed", self._on_search)
-        left.append(search)
-        left.append(Gtk.Separator())
+        fct = Gtk.SignalListItemFactory()
+        fct.connect("setup", self._setup)
+        fct.connect("bind",  self._bind)
 
-        # Liste des fichiers
-        self._store     = Gio.ListStore(item_type=ArchiveEntry)
-        self._sel_model = Gtk.MultiSelection.new(self._store)
-
-        factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", self._factory_setup)
-        factory.connect("bind",  self._factory_bind)
-
-        self._lv = Gtk.ListView(model=self._sel_model, factory=factory)
+        self._lv = Gtk.ListView(model=self._sel, factory=fct)
         self._lv.set_vexpand(True)
         self._lv.add_css_class("navigation-sidebar")
         self._lv.connect("activate", self._on_activate)
 
-        # Simple clic pour expand/collapse dossiers
+        # Clic simple pour expand/collapse
         click = Gtk.GestureClick()
         click.set_button(1)
         click.connect("pressed", self._on_click)
         self._lv.add_controller(click)
 
-        # Drag source — DnD vers Nautilus
-        drag_src = Gtk.DragSource()
-        drag_src.set_actions(Gdk.DragAction.COPY)
-        drag_src.connect("prepare",  self._on_drag_prepare)
-        drag_src.connect("drag-begin", self._on_drag_begin)
-        self._lv.add_controller(drag_src)
+        # DnD source
+        drag = Gtk.DragSource()
+        drag.set_actions(Gdk.DragAction.COPY)
+        drag.connect("prepare",    self._dnd_prepare)
+        drag.connect("drag-begin", self._dnd_begin)
+        drag.connect("drag-end",   self._dnd_end)
+        self._lv.add_controller(drag)
 
-        scroll_l = Gtk.ScrolledWindow()
-        scroll_l.set_vexpand(True)
-        scroll_l.set_overlay_scrolling(False)
-        scroll_l.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll_l.set_child(self._lv)
-        left.append(scroll_l)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_overlay_scrolling(False)
+        scroll.set_child(self._lv)
 
-        # Boutons extraction bas gauche
-        btn_box = Gtk.Box(spacing=6)
-        btn_box.set_margin_start(8)
-        btn_box.set_margin_end(8)
-        btn_box.set_margin_top(6)
-        btn_box.set_margin_bottom(6)
+        # Boutons bas
+        bar = Gtk.Box(spacing=6)
+        bar.set_margin_start(8); bar.set_margin_end(8)
+        bar.set_margin_top(6);   bar.set_margin_bottom(6)
 
-        self._extract_all_btn = Gtk.Button(label=T["extract_all"])
-        self._extract_all_btn.add_css_class("suggested-action")
-        self._extract_all_btn.connect("clicked", self._on_extract_all)
-        self._extract_sel_btn = Gtk.Button(label=T["extract_sel"])
-        self._extract_sel_btn.connect("clicked", self._on_extract_sel)
+        btn_all = Gtk.Button(label=T["extract_all"])
+        btn_all.add_css_class("suggested-action")
+        btn_all.connect("clicked", self._extract_all)
 
-        btn_box.append(self._extract_all_btn)
-        btn_box.append(self._extract_sel_btn)
-        left.append(Gtk.Separator())
-        left.append(btn_box)
+        btn_sel = Gtk.Button(label=T["extract_sel"])
+        btn_sel.connect("clicked", self._extract_sel)
 
-        paned.set_start_child(left)
+        bar.append(btn_all)
+        bar.append(btn_sel)
 
-        # --- Panneau droit : destination ---
-        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        # Progress
+        self._prog = Gtk.ProgressBar()
+        self._prog.set_visible(False)
+        self._prog.set_margin_start(8); self._prog.set_margin_end(8)
+        self._prog.set_margin_bottom(6)
 
-        # Header destination
-        dest_hdr = Gtk.Box(spacing=6)
-        dest_hdr.set_margin_start(8)
-        dest_hdr.set_margin_end(8)
-        dest_hdr.set_margin_top(6)
-        dest_hdr.set_margin_bottom(6)
+        # Layout
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.append(self._search)
+        content.append(Gtk.Separator())
+        content.append(scroll)
+        content.append(Gtk.Separator())
+        content.append(bar)
+        content.append(self._prog)
 
-        dest_lbl = Gtk.Label(label=T["dest_label"])
-        dest_lbl.add_css_class("dim-label")
+        # Panel droit filesystem
+        self._fs_panel = FilePanel()
+        self._fs_panel.navigate(os.path.dirname(archive_path))
 
-        self._dest_path = os.path.dirname(archive_path)
-        self._dest_lbl  = Gtk.Label(label=self._dest_path)
-        self._dest_lbl.set_hexpand(True)
-        self._dest_lbl.set_halign(Gtk.Align.START)
-        self._dest_lbl.set_ellipsize(Pango.EllipsizeMode.START)
-        self._dest_lbl.add_css_class("dim-label")
-
-        browse_btn = Gtk.Button(label=T["browse"])
-        browse_btn.connect("clicked", self._on_browse_dest)
-
-        dest_hdr.append(dest_lbl)
-        dest_hdr.append(self._dest_lbl)
-        dest_hdr.append(browse_btn)
-        right.append(dest_hdr)
-        right.append(Gtk.Separator())
-
-        # Zone drop
-        self._drop_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self._drop_box.set_vexpand(True)
-        self._drop_box.set_valign(Gtk.Align.CENTER)
-        self._drop_box.set_halign(Gtk.Align.CENTER)
-
-        drop_icon = Gtk.Image.new_from_icon_name("folder-download-symbolic")
-        drop_icon.set_pixel_size(64)
-        drop_icon.add_css_class("dim-label")
-        drop_hint = Gtk.Label(label=T["drop_hint"])
-        drop_hint.add_css_class("dim-label")
-        drop_hint.set_wrap(True)
-        drop_hint.set_max_width_chars(30)
-        drop_hint.set_justify(Gtk.Justification.CENTER)
-
-        self._drop_box.append(drop_icon)
-        self._drop_box.append(drop_hint)
-
-        # Drop target
-        drop_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
-        drop_target.connect("drop", self._on_drop)
-        drop_target.connect("enter", lambda *_: Gdk.DragAction.COPY)
-        right.add_controller(drop_target)
-        right.append(self._drop_box)
-
-        # Barre de progression
-        self._progress = Gtk.ProgressBar()
-        self._progress.set_visible(False)
-        self._progress.set_margin_start(12)
-        self._progress.set_margin_end(12)
-        self._progress.set_margin_bottom(8)
-        right.append(self._progress)
-
-        paned.set_end_child(right)
+        # Paned
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(420)
+        paned.set_wide_handle(True)
+        paned.set_start_child(content)
+        paned.set_end_child(self._fs_panel)
 
         tv.set_content(paned)
         self.set_content(tv)
@@ -411,13 +435,7 @@ class ArchiveBrowserWindow(Adw.Window):
             Gdk.Display.get_default(), css,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        # Charger l'archive après affichage de la fenêtre
-        self.connect("map", lambda *_: self._load_archive())
-
-        # Escape — à la toute fin après tout le setup
-        self._setup_shortcuts()
-
-    def _setup_shortcuts(self):
+        # Escape
         sc = Gtk.ShortcutController()
         sc.set_scope(Gtk.ShortcutScope.MANAGED)
         sc.add_shortcut(Gtk.Shortcut.new(
@@ -425,177 +443,128 @@ class ArchiveBrowserWindow(Adw.Window):
             Gtk.CallbackAction.new(lambda *_: self.close() or True)))
         self.add_controller(sc)
 
-    # -- Chargement archive --------------------------------------------------
+        # Charger
+        self.connect("map", lambda *_: self._load())
 
+    # -- Chargement ----------------------------------------------------------
 
-    def _load_archive(self):
-        # Délai court pour laisser GTK afficher la fenêtre
-        GLib.timeout_add(300, self._do_load)
+    def _load(self):
+        threading.Thread(target=self._do_load, daemon=True).start()
 
     def _do_load(self):
-        entries = _list_archive(self._archive_path)
-        self._entries   = entries
-        self._collapsed = set()  # chemins des dossiers collapsed
-        # Collecter tous les dossiers et les collapser par défaut
-        # sauf le niveau racine
-        for e in entries:
-            if e.is_dir:
-                depth = e.path.rstrip("/").count("/")
-                if depth > 0:
-                    self._collapsed.add(e.path.rstrip("/"))
+        entries = _list_archive(self._archive)
+        GLib.idle_add(self._apply, entries)
+
+    def _apply(self, entries):
+        # Construire l'arbre depuis la liste plate
+        self._collapsed = set()
+        self._tree      = self._build_tree(entries)
+        # Collapser tous les sous-dossiers par défaut
+        for e in self._tree:
+            if e.is_dir and e.depth > 0:
+                self._collapsed.add(e.full_path)
         self._refresh_store()
         return False
 
+    def _build_tree(self, entries):
+        """Construit l'arbre trié — dossiers d'abord, contenu sous son parent."""
+        from collections import defaultdict
+        children = defaultdict(list)
+        for name, size, is_dir in entries:
+            parent = os.path.dirname(name.rstrip("/"))
+            depth  = name.rstrip("/").count("/")
+            e      = Entry(name, size, is_dir, depth)
+            children[parent].append(e)
+
+        # Trier chaque niveau : dossiers d'abord
+        for key in children:
+            children[key].sort(key=lambda e: (not e.is_dir, e.name.lower()))
+
+        # Parcours en profondeur
+        result = []
+        def _walk(parent):
+            for e in children.get(parent, []):
+                result.append(e)
+                if e.is_dir:
+                    _walk(e.full_path.rstrip("/"))
+
+        # Démarrer depuis la racine ""
+        _walk("")
+        # Si vide, démarrer depuis les parents de premier niveau
+        if not result:
+            for r in sorted(set(children.keys())):
+                if "/" not in r:
+                    _walk(r)
+        return result
+
     def _refresh_store(self):
-        """Reconstruit le store en respectant les collapsed."""
         self._store.remove_all()
-        visible = self._get_visible_entries()
-        self._pending = visible[:]
-        self._load_page()
+        for e in self._tree:
+            if self._is_visible(e):
+                self._store.append(e)
 
-    def _get_visible_entries(self):
-        """Retourne les entrées visibles selon l'état collapsed."""
-        visible = []
-        for e in self._entries:
-            path  = e.path.rstrip("/")
-            parts = path.split("/")
-            # Vérifier si un ancêtre est collapsed
-            hidden = False
-            for i in range(len(parts) - 1):
-                ancestor = "/".join(parts[:i+1])
-                if ancestor in self._collapsed:
-                    hidden = True
+    def _is_visible(self, entry):
+        """Vrai si aucun ancêtre n'est collapsed."""
+        path = entry.full_path.rstrip("/")
+        parts = path.split("/")
+        # Vérifier chaque ancêtre
+        for i in range(len(parts) - 1):
+            ancestor = "/".join(parts[:i+1])
+            # Trouver l'entrée dossier correspondante
+            for e in self._tree:
+                if e.is_dir and e.full_path.rstrip("/") == ancestor:
+                    if e.full_path in self._collapsed:
+                        return False
                     break
-            if not hidden:
-                visible.append(e)
-        return visible
-
-    def _load_page(self):
-        if not hasattr(self, "_pending") or not self._pending:
-            return False
-        batch = self._pending[:150]
-        self._pending = self._pending[150:]
-        for e in batch:
-            self._store.append(e)
-        if self._pending:
-            GLib.timeout_add(8, self._load_page)
-        return False
-
-
+        return True
 
     # -- Factory -------------------------------------------------------------
 
-    def _factory_setup(self, factory, item):
+    def _setup(self, fct, item):
         box  = Gtk.Box(spacing=6)
-        box.set_margin_start(4)
-        box.set_margin_end(4)
-        box.set_margin_top(2)
-        box.set_margin_bottom(2)
-        icon = Gtk.Image()
-        icon.set_pixel_size(16)
-        name = Gtk.Label()
-        name.set_halign(Gtk.Align.START)
-        name.set_hexpand(True)
-        name.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        size = Gtk.Label()
-        size.set_width_chars(10)
-        size.set_halign(Gtk.Align.END)
-        size.add_css_class("dim-label")
-        date = Gtk.Label()
-        date.set_width_chars(16)
-        date.set_halign(Gtk.Align.END)
-        date.add_css_class("dim-label")
-        box.append(icon)
-        box.append(name)
-        box.append(size)
-        box.append(date)
+        box.set_margin_start(4); box.set_margin_end(4)
+        box.set_margin_top(2);   box.set_margin_bottom(2)
+        icon = Gtk.Image(); icon.set_pixel_size(16)
+        name = Gtk.Label(); name.set_halign(Gtk.Align.START)
+        name.set_hexpand(True); name.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        size = Gtk.Label(); size.set_halign(Gtk.Align.END)
+        size.set_width_chars(10); size.add_css_class("dim-label")
+        box.append(icon); box.append(name); box.append(size)
         item.set_child(box)
 
-    def _factory_bind(self, factory, item):
-        entry = item.get_item()
-        box   = item.get_child()
-        icon  = box.get_first_child()
-        name  = icon.get_next_sibling()
-        size  = name.get_next_sibling()
-        date  = size.get_next_sibling()
+    def _bind(self, fct, item):
+        e    = item.get_item()
+        box  = item.get_child()
+        icon = box.get_first_child()
+        name = icon.get_next_sibling()
+        size = name.get_next_sibling()
 
         # Indentation selon profondeur
-        box.set_margin_start(4 + entry.depth * 16)
+        box.set_margin_start(4 + e.depth * 16)
 
-        if entry.is_dir:
-            path = entry.path.rstrip("/")
-            collapsed = hasattr(self, "_collapsed") and path in self._collapsed
+        if e.is_dir:
+            collapsed = e.full_path in self._collapsed
             icon.set_from_icon_name(
                 "folder-symbolic" if collapsed else "folder-open-symbolic")
             name.add_css_class("bold")
             size.set_text("▶" if collapsed else "▼")
         else:
-            # Icône selon extension
-            ext   = os.path.splitext(entry.name)[1].lower()
+            ext   = os.path.splitext(e.name)[1].lower()
             iname = "text-x-generic-symbolic"
-            for check, ico in [
+            for exts, ico in [
                 ({".jpg",".jpeg",".png",".gif",".webp",".svg"}, "image-x-generic-symbolic"),
                 ({".mp4",".mkv",".avi",".mov",".webm"},          "video-x-generic-symbolic"),
-                ({".mp3",".flac",".ogg",".wav",".aac"},          "audio-x-generic-symbolic"),
-                ({".pdf"},                                         "application-pdf-symbolic"),
-                ({".zip",".7z",".rar",".tar",".gz"},             "package-x-generic-symbolic"),
-                ({".py",".js",".sh",".c",".cpp",".rs"},          "text-x-script-symbolic"),
+                ({".mp3",".flac",".ogg",".wav"},                 "audio-x-generic-symbolic"),
+                ({".pdf"},                                        "application-pdf-symbolic"),
+                ({".zip",".7z",".rar",".tar"},                   "package-x-generic-symbolic"),
+                ({".py",".js",".sh",".c",".cpp"},               "text-x-script-symbolic"),
             ]:
-                if ext in check:
-                    iname = ico
-                    break
+                if ext in exts: iname = ico; break
             icon.set_from_icon_name(iname)
             name.remove_css_class("bold")
-            size.set_text(_fmt_size(entry.size))
-
-        name.set_text(entry.name)
-        date.set_text(entry.date[:16] if entry.date else "")
-
-    def _on_activate(self, lv, pos):
-        """Double-clic — ouvrir fichier."""
-        entry = self._store.get_item(pos)
-        if not entry or entry.is_dir:
-            return
-        # Extraire et ouvrir le fichier
-        tmp = tempfile.mkdtemp(prefix="archive_open_")
-        _extract_entries(self._archive_path, [entry], tmp, self._password)
-        extracted = os.path.join(tmp, os.path.basename(entry.path))
-        if os.path.exists(extracted):
-            try:
-                Gio.AppInfo.launch_default_for_uri(
-                    Gio.File.new_for_path(extracted).get_uri(), None)
-            except Exception:
-                pass
-
-    def _on_click(self, gesture, n, x, y):
-        """Simple clic — toggle collapse pour les dossiers."""
-        # Trouver l'index de la ligne cliquée
-        widget = gesture.get_widget()
-        row    = widget.get_first_child()
-        idx    = 0
-        cumul  = 0
-        while row:
-            h = row.get_height()
-            if cumul <= y < cumul + h:
-                break
-            cumul += h
-            idx   += 1
-            row    = row.get_next_sibling()
-
-        if idx >= self._store.get_n_items():
-            return
-        entry = self._store.get_item(idx)
-        if not entry or not entry.is_dir:
-            return
-
-        path = entry.path.rstrip("/")
-        if not hasattr(self, "_collapsed"):
-            self._collapsed = set()
-        if path in self._collapsed:
-            self._collapsed.discard(path)
-        else:
-            self._collapsed.add(path)
-        self._refresh_store()
+            size.set_text(_fmt_size(e.size))
+        # Afficher seulement le nom (pas le chemin complet)
+        name.set_text(os.path.basename(e.name.rstrip("/")))
 
     # -- Recherche -----------------------------------------------------------
 
@@ -603,141 +572,133 @@ class ArchiveBrowserWindow(Adw.Window):
         text = entry.get_text().lower().strip()
         self._store.remove_all()
         if not text:
-            for e in self._entries:
-                self._store.append(e)
+            self._refresh_store()
         else:
-            for e in self._entries:
-                if text in e.name.lower() or text in e.path.lower():
+            for e in self._tree:
+                if text in e.name.lower():
                     self._store.append(e)
 
-    # -- DnD -----------------------------------------------------------------
+    # -- Activation ----------------------------------------------------------
 
-    def _on_drag_prepare(self, drag_src, x, y):
-        """Prépare les fichiers à extraire dans un dossier tmp pour le DnD."""
-        selected = self._get_selected()
-        if not selected:
-            return None
+    def _on_click(self, gesture, n, x, y):
+        """Simple clic — toggle collapse pour les dossiers."""
+        widget = gesture.get_widget()
+        row    = widget.get_first_child()
+        idx    = 0; cumul = 0
+        while row:
+            h = row.get_height()
+            if cumul <= y < cumul + h:
+                break
+            cumul += h; idx += 1
+            row = row.get_next_sibling()
+        if idx >= self._store.get_n_items():
+            return
+        e = self._store.get_item(idx)
+        if not e or not e.is_dir:
+            return
+        if e.full_path in self._collapsed:
+            self._collapsed.discard(e.full_path)
+        else:
+            self._collapsed.add(e.full_path)
+        self._refresh_store()
 
-        # Extraire dans un dossier temp
-        tmp = tempfile.mkdtemp(prefix="archive_browser_")
-        _extract_entries(self._archive_path, selected, tmp, self._password)
-
-        # Construire la liste des fichiers extraits
-        files = []
-        for e in selected:
-            extracted = os.path.join(tmp, os.path.basename(e.path.rstrip("/")))
-            if os.path.exists(extracted):
-                files.append(Gio.File.new_for_path(extracted))
-
-        if not files:
-            return None
-
-        file_list = Gdk.FileList.new_from_list(files)
-        return Gdk.ContentProvider.new_for_value(file_list)
-
-    def _on_drag_begin(self, drag_src, drag):
-        selected = self._get_selected()
-        if selected:
-            icon = Gtk.DragIcon.get_for_drag(drag)
-            img  = Gtk.Image.new_from_icon_name("package-x-generic-symbolic")
-            img.set_pixel_size(32)
-            icon.set_child(img)
-
-    def _on_drop(self, target, value, x, y):
-        """Reçoit un drop de fichiers → les copie dans la destination."""
-        if isinstance(value, Gdk.FileList):
-            for gfile in value.get_files():
-                dst = os.path.join(self._dest_path, os.path.basename(gfile.get_path()))
-                try:
-                    if os.path.isdir(gfile.get_path()):
-                        shutil.copytree(gfile.get_path(), dst)
-                    else:
-                        shutil.copy2(gfile.get_path(), dst)
-                except Exception as e:
-                    self._show_error(str(e))
-        return True
+    def _on_activate(self, lv, pos):
+        """Double-clic : extrait et ouvre."""
+        e = self._store.get_item(pos)
+        if e.is_dir:
+            return
+        tmp = tempfile.mkdtemp(prefix="ab_open_")
+        def _work():
+            _extract(self._archive, [e.name], tmp)
+            # Chercher le fichier extrait
+            for root, dirs, files in os.walk(tmp):
+                for f in files:
+                    if f == os.path.basename(e.name):
+                        path = os.path.join(root, f)
+                        GLib.idle_add(lambda p=path: Gio.AppInfo.launch_default_for_uri(
+                            Gio.File.new_for_path(p).get_uri(), None))
+                        return
+        threading.Thread(target=_work, daemon=True).start()
 
     # -- Extraction ----------------------------------------------------------
 
-    def _on_extract_all(self, _):
+    def _get_selected_names(self):
+        sel  = self._sel.get_selection()
+        names = []
+        for i in range(self._store.get_n_items()):
+            if sel.contains(i):
+                names.append(self._store.get_item(i).name)
+        return names
+
+    def _extract_all(self, _):
         self._do_extract([])
 
-    def _on_extract_sel(self, _):
-        selected = self._get_selected()
-        if not selected:
-            dlg = Adw.MessageDialog(transient_for=self,
-                                    heading=T["no_selection"])
-            dlg.add_response("ok", T["ok"])
-            dlg.present()
-            return
-        self._do_extract(selected)
+    def _extract_sel(self, _):
+        names = self._get_selected_names()
+        if names:
+            self._do_extract(names)
 
-    def _do_extract(self, entries):
-        self._progress.set_visible(True)
-        self._progress.pulse()
-        self._extract_all_btn.set_sensitive(False)
-        self._extract_sel_btn.set_sensitive(False)
+    def _do_extract(self, names):
+        dst = self._fs_panel.path
+        self._prog.set_visible(True)
+        self._prog.pulse()
 
-        # Pulse pendant l'extraction
         def _pulse():
-            if self._progress.get_visible():
-                self._progress.pulse()
+            if self._prog.get_visible():
+                self._prog.pulse()
                 return True
             return False
         GLib.timeout_add(100, _pulse)
 
         def _work():
-            _extract_entries(
-                self._archive_path, entries,
-                self._dest_path, self._password,
-                callback=self._on_extract_done)
-
+            _extract(self._archive, names, dst)
+            GLib.idle_add(self._extract_done, dst)
         threading.Thread(target=_work, daemon=True).start()
 
-    def _on_extract_done(self, ok):
-        self._progress.set_visible(False)
-        self._extract_all_btn.set_sensitive(True)
-        self._extract_sel_btn.set_sensitive(True)
-        if ok:
-            # Ouvrir le dossier destination dans Nautilus
-            try:
-                Gio.AppInfo.launch_default_for_uri(
-                    Gio.File.new_for_path(self._dest_path).get_uri(), None)
-            except Exception:
-                pass
+    def _extract_done(self, dst):
+        self._prog.set_visible(False)
+        self._fs_panel.refresh()
         return False
 
-    # -- Destination ---------------------------------------------------------
+    # -- DnD -----------------------------------------------------------------
+    # Dans GTK4, prepare() est appelé AVANT begin().
+    # On extrait donc directement dans prepare() — synchrone mais rapide.
 
-    def _on_browse_dest(self, _):
-        dlg = Gtk.FileDialog()
-        dlg.set_initial_folder(Gio.File.new_for_path(self._dest_path))
-        dlg.select_folder(self, None, self._on_dest_selected)
+    def _dnd_prepare(self, drag_src, x, y):
+        """Extrait les fichiers sélectionnés et retourne le ContentProvider."""
+        names = self._get_selected_names()
+        if not names:
+            return None
+        self._cleanup_tmp()
+        self._tmp = tempfile.mkdtemp(prefix="ab_dnd_")
+        # Extraction synchrone — nécessaire car prepare est appelé avant begin
+        _extract(self._archive, names, self._tmp)
+        files = []
+        for name in names:
+            # Chercher le fichier extrait récursivement
+            base = os.path.basename(name)
+            for root, dirs, fs in os.walk(self._tmp):
+                if base in fs:
+                    files.append(Gio.File.new_for_path(
+                        os.path.join(root, base)))
+                    break
+        if not files:
+            return None
+        return Gdk.ContentProvider.new_for_value(
+            Gdk.FileList.new_from_list(files))
 
-    def _on_dest_selected(self, dlg, result):
-        try:
-            folder = dlg.select_folder_finish(result)
-            if folder:
-                self._dest_path = folder.get_path()
-                self._dest_lbl.set_text(self._dest_path)
-        except Exception:
-            pass
+    def _dnd_begin(self, drag_src, drag):
+        icon = Gtk.DragIcon.get_for_drag(drag)
+        icon.set_child(Gtk.Image.new_from_icon_name("package-x-generic-symbolic"))
 
-    # -- Helpers -------------------------------------------------------------
+    def _dnd_end(self, drag_src, drag, delete_data):
+        GLib.timeout_add(2000, self._cleanup_tmp)
 
-    def _get_selected(self):
-        entries  = []
-        sel_bits = self._sel_model.get_selection()
-        for i in range(self._store.get_n_items()):
-            if sel_bits.contains(i):
-                entries.append(self._store.get_item(i))
-        return entries
-
-    def _show_error(self, msg):
-        dlg = Adw.MessageDialog(transient_for=self,
-                                heading=T["err_title"], body=msg)
-        dlg.add_response("ok", T["ok"])
-        dlg.present()
+    def _cleanup_tmp(self):
+        if self._tmp and os.path.exists(self._tmp):
+            shutil.rmtree(self._tmp, ignore_errors=True)
+        self._tmp = None
+        return False
 
 # ---------------------------------------------------------------------------
 # Nautilus extension
@@ -782,9 +743,7 @@ class ArchiveBrowserExtension(GObject.GObject, Nautilus.MenuProvider):
                             for ext in ARCHIVE_EXTS)]
         if not archives:
             return []
-
         self._last_path = archives[0].get_location().get_path()
-
         item = Nautilus.MenuItem(
             name="ArchiveBrowser::Open",
             label=T["menu_label"],
@@ -792,7 +751,8 @@ class ArchiveBrowserExtension(GObject.GObject, Nautilus.MenuProvider):
             icon="package-x-generic-symbolic",
         )
         item.connect("activate", lambda *_:
-            ArchiveBrowserWindow(archives[0].get_location().get_path()).present())
+            ArchiveBrowserWindow(
+                archives[0].get_location().get_path()).present())
         return [item]
 
     def get_background_items(self, folder):
