@@ -184,6 +184,9 @@ else:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
+
+
 def _nautilus_window():
     app = Gtk.Application.get_default()
     if app is None:
@@ -919,15 +922,29 @@ class FilePanel(Gtk.Box):
         if not isinstance(value, str):
             return False
         paths = [p.strip() for p in value.splitlines() if p.strip()]
-        for path in paths:
-            try:
-                dst = os.path.join(self._path, os.path.basename(path))
-                shutil.copy2(path, dst) if os.path.isfile(path) else \
-                    shutil.copytree(path, dst, dirs_exist_ok=True)
-            except Exception as ex:
-                self._error(str(ex))
-                return False
-        self.refresh()
+        win   = self._get_window()
+        if win:
+            GLib.idle_add(win.start_progress)
+
+        def _work():
+            total = len(paths)
+            for i, path in enumerate(paths):
+                try:
+                    self._rsync(path, self._path,
+                        lambda f: GLib.idle_add(win.set_progress,
+                            (i + f) / total) if win else None)
+                except Exception as ex:
+                    GLib.idle_add(self._error, str(ex))
+                    break
+            def _done():
+                self.refresh()
+                if win:
+                    win.stop_progress()
+                    win.show_toast(T["toast_copy_done"])
+            GLib.idle_add(_done)
+
+        import threading
+        threading.Thread(target=_work, daemon=True).start()
         return True
 
     # -- Dialogs helpers -----------------------------------------------------
@@ -1319,18 +1336,17 @@ class DualPanelKeyHandler(GObject.GObject):
         ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
 
         def on_f3(*_):
-            # Récupérer le dossier courant via le titre ou fallback home
             path = os.path.expanduser("~")
             app  = Gtk.Application.get_default()
             if app:
                 win = app.get_active_window()
                 if win:
-                    # Nautilus expose le dossier courant dans le titre
                     title = win.get_title() or ""
-                    candidate = os.path.expanduser(
-                        "~/" + title) if title else path
-                    if os.path.isdir(candidate):
-                        path = candidate
+                    if " — " in title:
+                        folder_name = title.split(" — ")[0].strip()
+                        candidate = os.path.join(path, folder_name)
+                        if os.path.isdir(candidate):
+                            path = candidate
             DualPanelWindow(path).present()
             return True
 
