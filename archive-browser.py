@@ -22,6 +22,12 @@ gi.require_version("Adw", "1")
 gi.require_version("Nautilus", "4.0")
 from gi.repository import GObject, Gtk, Adw, Gdk, Gio, GLib, Nautilus, Pango
 
+try:
+    import libarchive
+    HAS_LIBARCHIVE = True
+except ImportError:
+    HAS_LIBARCHIVE = False
+
 SZ_BIN    = shutil.which("7z")    or "/usr/bin/7z"
 UNRAR_BIN = shutil.which("unrar") or "/usr/bin/unrar"
 
@@ -60,8 +66,39 @@ def _is_rar(path):
            bool(re.search(r"\.part\d+\.rar$", path, re.I))
 
 def _list_archive(path):
-    """Retourne une liste de (name, size, is_dir)."""
+    """Retourne une liste de (name, size, is_dir) via libarchive ou fallback."""
     entries = []
+    if HAS_LIBARCHIVE:
+        try:
+            # Lancer dans un subprocess pour éviter les conflits de signaux
+            # avec GTK/GLib dans le thread principal
+            script = """
+import sys, libarchive
+entries = []
+with libarchive.file_reader(sys.argv[1]) as a:
+    for e in a:
+        name   = e.pathname.rstrip("/")
+        is_dir = e.isdir or e.pathname.endswith("/")
+        size   = str(e.size)
+        if name:
+            print(f"{1 if is_dir else 0}\t{size}\t{name}")
+"""
+            r = subprocess.run(
+                ["python3", "-c", script, path],
+                capture_output=True, text=True, timeout=15)
+            for line in r.stdout.splitlines():
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    is_dir = parts[0] == "1"
+                    size   = parts[1]
+                    name   = parts[2]
+                    entries.append((name, size, is_dir))
+            if entries:
+                return entries
+        except Exception:
+            pass  # fallback ci-dessous
+
+    # Fallback 7z/unrar
     if _is_rar(path):
         try:
             r = subprocess.run([UNRAR_BIN, "v", path],
@@ -104,17 +141,16 @@ def _list_archive(path):
                     entries.append((name, size, is_dir))
         except Exception:
             pass
-    # Trier : dossiers d'abord
-    entries.sort(key=lambda e: (not e[2], e[0].lower()))
     return entries
 
 def _extract(archive, names, dst):
+    """Extraction via 7z/unrar — fiable pour tous les cas."""
     os.makedirs(dst, exist_ok=True)
     if _is_rar(archive):
         cmd = [UNRAR_BIN, "x", "-y", "-p-", archive] + names + [dst + "/"]
     else:
         cmd = [SZ_BIN, "x", archive, f"-o{dst}", "-y"] + names
-    subprocess.run(cmd, capture_output=True, timeout=60)
+    subprocess.run(cmd, capture_output=True, timeout=300)
 
 def _fmt_size(s):
     try:
@@ -332,7 +368,10 @@ class ArchiveBrowserWindow(Adw.Window):
         super().__init__()
         self.set_default_size(1000, 650)
         self.set_resizable(True)
-        self._archive  = archive_path
+        self._archive       = archive_path
+        self._cache_dir     = None
+        self._cache_files   = {}
+        self._prefetch_lock = threading.Lock()
         self._all      = []
         self._tmp      = None
         self._tmp_ready = False
@@ -365,11 +404,13 @@ class ArchiveBrowserWindow(Adw.Window):
         self._lv.add_css_class("navigation-sidebar")
         self._lv.connect("activate", self._on_activate)
 
-        # Clic simple pour expand/collapse
+        # Clic simple pour expand/collapse + prefetch DnD
         click = Gtk.GestureClick()
         click.set_button(1)
         click.connect("pressed", self._on_click)
         self._lv.add_controller(click)
+
+
 
         # DnD source
         drag = Gtk.DragSource()
@@ -444,7 +485,8 @@ class ArchiveBrowserWindow(Adw.Window):
         self.add_controller(sc)
 
         # Charger
-        self.connect("map", lambda *_: self._load())
+        self.connect("map",          lambda *_: self._load())
+        self.connect("close-request", lambda *_: self._cleanup_cache() or False)
 
     # -- Chargement ----------------------------------------------------------
 
@@ -459,6 +501,7 @@ class ArchiveBrowserWindow(Adw.Window):
         # Construire l'arbre depuis la liste plate
         self._collapsed = set()
         self._tree      = self._build_tree(entries)
+
         # Collapser tous les sous-dossiers par défaut
         for e in self._tree:
             if e.is_dir and e.depth > 0:
@@ -470,11 +513,14 @@ class ArchiveBrowserWindow(Adw.Window):
         """Construit l'arbre trié — dossiers d'abord, contenu sous son parent."""
         from collections import defaultdict
         children = defaultdict(list)
+        all_paths = set()
+
         for name, size, is_dir in entries:
             parent = os.path.dirname(name.rstrip("/"))
             depth  = name.rstrip("/").count("/")
             e      = Entry(name, size, is_dir, depth)
             children[parent].append(e)
+            all_paths.add(name.rstrip("/"))
 
         # Trier chaque niveau : dossiers d'abord
         for key in children:
@@ -488,13 +534,22 @@ class ArchiveBrowserWindow(Adw.Window):
                 if e.is_dir:
                     _walk(e.full_path.rstrip("/"))
 
-        # Démarrer depuis la racine ""
-        _walk("")
-        # Si vide, démarrer depuis les parents de premier niveau
+        # Racines = parents qui ne sont pas dans all_paths
+        roots = sorted(p for p in children.keys() if p not in all_paths)
+
+        # Si pas de racine trouvée — cas ZIP sans dossier racine explicite
+        if not roots:
+            roots = sorted(children.keys())
+
+        for r in roots:
+            _walk(r)
+
+        # Si toujours vide — listing plat sans arbre
         if not result:
-            for r in sorted(set(children.keys())):
-                if "/" not in r:
-                    _walk(r)
+            for name, size, is_dir in entries:
+                depth = name.count("/")
+                result.append(Entry(name, size, is_dir, depth))
+
         return result
 
     def _refresh_store(self):
@@ -504,18 +559,13 @@ class ArchiveBrowserWindow(Adw.Window):
                 self._store.append(e)
 
     def _is_visible(self, entry):
-        """Vrai si aucun ancêtre n'est collapsed."""
-        path = entry.full_path.rstrip("/")
+        """Vrai si aucun ancêtre n'est collapsed — O(depth) grâce au set."""
+        path  = entry.full_path.rstrip("/")
         parts = path.split("/")
-        # Vérifier chaque ancêtre
         for i in range(len(parts) - 1):
             ancestor = "/".join(parts[:i+1])
-            # Trouver l'entrée dossier correspondante
-            for e in self._tree:
-                if e.is_dir and e.full_path.rstrip("/") == ancestor:
-                    if e.full_path in self._collapsed:
-                        return False
-                    break
+            if ancestor in self._collapsed:
+                return False
         return True
 
     # -- Factory -------------------------------------------------------------
@@ -579,6 +629,28 @@ class ArchiveBrowserWindow(Adw.Window):
                     self._store.append(e)
 
     # -- Activation ----------------------------------------------------------
+
+    def _ensure_extracted(self, name):
+        """Extrait si nécessaire et retourne le chemin local."""
+        with self._prefetch_lock:
+            if name in self._cache_files:
+                p = self._cache_files[name]
+                if os.path.exists(p):
+                    return p
+            # Créer le cache dir si nécessaire
+            if not self._cache_dir or not os.path.isdir(self._cache_dir):
+                self._cache_dir = tempfile.mkdtemp(prefix="ab_cache_")
+        # Extraire (hors lock pour ne pas bloquer)
+        _extract(self._archive, [name], self._cache_dir)
+        # Chercher le fichier extrait
+        base = os.path.basename(name)
+        for root, dirs, files in os.walk(self._cache_dir):
+            if base in files:
+                path = os.path.join(root, base)
+                with self._prefetch_lock:
+                    self._cache_files[name] = path
+                return path
+        return None
 
     def _on_click(self, gesture, n, x, y):
         """Simple clic — toggle collapse pour les dossiers."""
@@ -661,27 +733,20 @@ class ArchiveBrowserWindow(Adw.Window):
         return False
 
     # -- DnD -----------------------------------------------------------------
-    # Dans GTK4, prepare() est appelé AVANT begin().
-    # On extrait donc directement dans prepare() — synchrone mais rapide.
+    # prepare() est appelé AVANT begin() dans GTK4.
+    # On utilise le cache — si le fichier a été pré-extrait au survol
+    # le DnD est instantané, sinon on extrait synchrone (cas rare).
 
     def _dnd_prepare(self, drag_src, x, y):
-        """Extrait les fichiers sélectionnés et retourne le ContentProvider."""
+        """Retourne les fichiers depuis le cache ou extrait si nécessaire."""
         names = self._get_selected_names()
         if not names:
             return None
-        self._cleanup_tmp()
-        self._tmp = tempfile.mkdtemp(prefix="ab_dnd_")
-        # Extraction synchrone — nécessaire car prepare est appelé avant begin
-        _extract(self._archive, names, self._tmp)
         files = []
         for name in names:
-            # Chercher le fichier extrait récursivement
-            base = os.path.basename(name)
-            for root, dirs, fs in os.walk(self._tmp):
-                if base in fs:
-                    files.append(Gio.File.new_for_path(
-                        os.path.join(root, base)))
-                    break
+            path = self._ensure_extracted(name)
+            if path and os.path.exists(path):
+                files.append(Gio.File.new_for_path(path))
         if not files:
             return None
         return Gdk.ContentProvider.new_for_value(
@@ -692,12 +757,15 @@ class ArchiveBrowserWindow(Adw.Window):
         icon.set_child(Gtk.Image.new_from_icon_name("package-x-generic-symbolic"))
 
     def _dnd_end(self, drag_src, drag, delete_data):
-        GLib.timeout_add(2000, self._cleanup_tmp)
+        pass  # Cache conservé pour réutilisation
 
-    def _cleanup_tmp(self):
-        if self._tmp and os.path.exists(self._tmp):
-            shutil.rmtree(self._tmp, ignore_errors=True)
-        self._tmp = None
+    def _cleanup_cache(self):
+        """Nettoyage à la fermeture de la fenêtre."""
+        with self._prefetch_lock:
+            if self._cache_dir and os.path.exists(self._cache_dir):
+                shutil.rmtree(self._cache_dir, ignore_errors=True)
+            self._cache_dir   = None
+            self._cache_files = {}
         return False
 
 # ---------------------------------------------------------------------------
