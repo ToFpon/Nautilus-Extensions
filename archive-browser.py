@@ -85,7 +85,7 @@ with libarchive.file_reader(sys.argv[1]) as a:
 """
             r = subprocess.run(
                 ["python3", "-c", script, path],
-                capture_output=True, text=True, timeout=15)
+                capture_output=True, text=True, timeout=None)
             for line in r.stdout.splitlines():
                 parts = line.split("\t", 2)
                 if len(parts) == 3:
