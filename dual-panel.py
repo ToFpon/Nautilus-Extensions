@@ -9,6 +9,7 @@
 #   nautilus -q
 
 import os
+import re
 import shutil
 import subprocess
 import locale
@@ -57,6 +58,9 @@ if _lang.startswith("de"):
         "delete_ok":     "Löschen",
         "open_terminal": "In Terminal öffnen",
         "sidebar_favorites": "Favoriten",
+        "toast_copy_done":  "Kopieren abgeschlossen",
+        "toast_move_done":  "Verschieben abgeschlossen",
+        "toast_error":      "Fehler: {msg}",
         "sidebar_trash":     "Papierkorb",
         "sidebar_bookmarks": "Lesezeichen",
         "sidebar_places":    "Orte",
@@ -105,6 +109,9 @@ elif _lang.startswith("fr"):
         "delete_ok":     "Supprimer",
         "open_terminal":  "Terminal ici",
         "sidebar_favorites": "Favoris",
+        "toast_copy_done":  "Copie terminée",
+        "toast_move_done":  "Déplacement terminé",
+        "toast_error":      "Erreur : {msg}",
         "sidebar_trash":     "Corbeille",
         "sidebar_bookmarks": "Signets",
         "sidebar_places":    "Emplacements",
@@ -152,6 +159,9 @@ else:
         "delete_ok":     "Delete",
         "open_terminal":  "Terminal here",
         "sidebar_favorites": "Favorites",
+        "toast_copy_done":  "Copy complete",
+        "toast_move_done":  "Move complete",
+        "toast_error":      "Error: {msg}",
         "sidebar_trash":     "Trash",
         "sidebar_bookmarks": "Bookmarks",
         "sidebar_places":    "Places",
@@ -658,22 +668,62 @@ class FilePanel(Gtk.Box):
             self._exec_transfer(selected, dst_dir, move)
 
     def _exec_transfer(self, entries, dst_dir, move):
-        for e in entries:
-            dst = os.path.join(dst_dir, e.name)
-            try:
-                if move:
-                    shutil.move(e.path, dst)
-                else:
-                    if e.is_dir:
-                        shutil.copytree(e.path, dst, dirs_exist_ok=True)
+        import threading
+        win = self._get_window()
+        if win:
+            GLib.idle_add(win.start_progress)
+
+        def _work():
+            total = len(entries)
+            for i, e in enumerate(entries):
+                dst = os.path.join(dst_dir, e.name)
+                try:
+                    if move:
+                        # Move : rsync + suppression source
+                        self._rsync(e.path, dst_dir,
+                            lambda f: GLib.idle_add(win.set_progress,
+                                (i + f) / total) if win else None)
+                        shutil.rmtree(e.path) if e.is_dir else os.remove(e.path)
                     else:
-                        shutil.copy2(e.path, dst)
-            except Exception as ex:
-                self._error(str(ex))
-                return
-        self.refresh()
-        if self._other:
-            self._other.refresh()
+                        self._rsync(e.path, dst_dir,
+                            lambda f: GLib.idle_add(win.set_progress,
+                                (i + f) / total) if win else None)
+                except Exception as ex:
+                    GLib.idle_add(self._error, str(ex))
+                    break
+            def _done():
+                self.refresh()
+                if self._other:
+                    self._other.refresh()
+                if win:
+                    win.stop_progress()
+                    win.show_toast(
+                        T["toast_move_done"] if move else T["toast_copy_done"])
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _rsync(self, src, dst_dir, progress_cb=None):
+        """Copie via rsync avec progression."""
+        cmd = ["rsync", "-a", "--progress", src, dst_dir + "/"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True)
+        for line in proc.stdout:
+            # rsync --progress: "  1,234,567  45%   12.34MB/s    0:00:05"
+            m = re.search("([0-9]+)%", line)
+            if m and progress_cb:
+                progress_cb(int(m.group(1)) / 100.0)
+        proc.wait()
+        if proc.returncode != 0:
+            raise Exception(proc.stderr.read())
+
+    def _get_window(self):
+        """Remonte au DualPanelWindow parent."""
+        w = self.get_root()
+        from gi.repository import Adw as _Adw
+        if isinstance(w, _Adw.Window):
+            return w
+        return None
 
     def _on_delete(self, _btn):
         selected = self.get_selected_entries()
@@ -1179,7 +1229,23 @@ class DualPanelWindow(Adw.Window):
         paned_main.set_start_child(self._sidebar)
         paned_main.set_end_child(paned_panels)
 
-        tv.set_content(paned_main)
+        # Barre de progression — toute la largeur sous les panneaux
+        self._prog = Gtk.ProgressBar()
+        self._prog.set_visible(False)
+        self._prog.set_margin_start(8)
+        self._prog.set_margin_end(8)
+        self._prog.set_margin_top(2)
+        self._prog.set_margin_bottom(4)
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_box.append(paned_main)
+        main_box.append(self._prog)
+
+        # Toast overlay pour les notifications
+        self._toast_overlay = Adw.ToastOverlay()
+        self._toast_overlay.set_child(main_box)
+
+        tv.set_content(self._toast_overlay)
         self.set_content(tv)
 
         # Raccourcis clavier
@@ -1206,6 +1272,21 @@ class DualPanelWindow(Adw.Window):
     def _on_sidebar_select(self, path):
         """Clic sur la sidebar → naviguer dans le panneau actif (gauche par défaut)."""
         self._left.navigate(path)
+
+    def show_toast(self, msg):
+        toast = Adw.Toast.new(msg)
+        toast.set_timeout(3)
+        self._toast_overlay.add_toast(toast)
+
+    def start_progress(self):
+        self._prog.set_fraction(0.0)
+        self._prog.set_visible(True)
+
+    def set_progress(self, fraction):
+        self._prog.set_fraction(max(0.0, min(1.0, fraction)))
+
+    def stop_progress(self):
+        self._prog.set_visible(False)
 
 
 # ---------------------------------------------------------------------------
