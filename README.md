@@ -363,13 +363,11 @@ Browse and selectively extract archive contents directly from Nautilus — a fil
 - **rar, r00, part1.rar…** — via `unrar` (full RAR5 support)
 
 **Features:**
-- 📂 Folder tree with **collapse/expand** — all subfolders collapsed by default, click to expand
-- 🔍 **Live filter** — search files by name
-- 📦 **Extract all** — extracts everything to destination folder
-- ✅ **Extract selection** — extracts only selected files
-- 🖱️ **Double-click** on a file — extracts and opens with default application
-- 📁 **Destination chooser** — pick any folder as extraction target
-- After extraction, destination folder opens automatically in Nautilus
+- 📂 Tree with collapse/expand — folders first 
+- 🖱️ Native DnD to filesystem 
+- 📋 Selective or total extraction 
+- 🔍 Live Filter 
+- 📁 Right Panel — Full Navigation, opens in the archive folder ZIP, 7z, RAR (RAR5 included)
 
 **Dependencies:**
 
