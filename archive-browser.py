@@ -47,7 +47,7 @@ if _lang.startswith("fr"):
     }
 else:
     T = {
-        "menu_label":   T["menu_label"],
+        "menu_label":   "Browse archive",
         "title":        "Archive Browser",
         "filter":       "Filter…",
         "extract_all":  "Extract all",
