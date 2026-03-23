@@ -347,7 +347,6 @@ Each loaded extension consumes memory and CPU. Extensions with background timers
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1`
 
-
 ---
 
 ### 🗜️ Archive Browser — `archive-browser.py`
@@ -369,10 +368,7 @@ Browse and selectively extract archive contents directly from Nautilus — a fil
 - 🔍 Live Filter 
 - 📁 Right Panel — Full Navigation, opens in the archive folder ZIP, 7z, RAR (RAR5 included)
 
-**Dependencies:**
-
-`python3-nautilus` `python3-gi` `gir1.2-adw-1` `p7zip-full` `unrar`
-
+**Dependencies:**`python3-nautilus` `python3-gi` `gir1.2-adw-1` `p7zip-full` `unrar`
 
 ---
 
