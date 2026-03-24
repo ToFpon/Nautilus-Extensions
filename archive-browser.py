@@ -15,7 +15,6 @@ import subprocess
 import tempfile
 import threading
 import locale
-
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -44,6 +43,53 @@ if _lang.startswith("fr"):
         "extract_sel":  "Extraire la sélection",
         "go_up":        "Dossier parent",
         "refresh":      "Actualiser",
+        "home":         "Accueil",
+        "user_dir_DESKTOP":    "Bureau",
+        "user_dir_DOWNLOAD":   "Téléchargements",
+        "user_dir_TEMPLATES":  "Modèles",
+        "user_dir_PUBLICSHARE":"Public",
+        "user_dir_DOCUMENTS":  "Documents",
+        "user_dir_MUSIC":      "Musique",
+        "user_dir_PICTURES":   "Images",
+        "user_dir_VIDEOS":     "Vidéos",
+    }
+elif _lang.startswith("en"):
+    T = {
+        "menu_label":   "Browse archive",
+        "title":        "Archive Browser",
+        "filter":       "Filter…",
+        "extract_all":  "Extract all",
+        "extract_sel":  "Extract selection",
+        "go_up":        "Parent folder",
+        "refresh":      "Refresh",
+        "home":         "Home",
+        "user_dir_DESKTOP":    "Desktop",
+        "user_dir_DOWNLOAD":   "Downloads",
+        "user_dir_TEMPLATES":  "Templates",
+        "user_dir_PUBLICSHARE":"Public",
+        "user_dir_DOCUMENTS":  "Documents",
+        "user_dir_MUSIC":      "Music",
+        "user_dir_PICTURES":   "Pictures",
+        "user_dir_VIDEOS":     "Videos",
+    }
+elif _lang.startswith("de"):
+    T = {
+        "menu_label":   "Archiv durchsuchen",
+        "title":        "Archiv-Browser",
+        "filter":       "Filtern…",
+        "extract_all":  "Alles entpacken",
+        "extract_sel":  "Auswahl entpacken",
+        "go_up":        "Übergeordneter Ordner",
+        "refresh":      "Aktualisieren",
+        "home":         "Persönlicher Ordner",
+        "user_dir_DESKTOP":    "Schreibtisch",
+        "user_dir_DOWNLOAD":   "Downloads",
+        "user_dir_TEMPLATES":  "Vorlagen",
+        "user_dir_PUBLICSHARE":"Öffentlich",
+        "user_dir_DOCUMENTS":  "Dokumente",
+        "user_dir_MUSIC":      "Musik",
+        "user_dir_PICTURES":   "Bilder",
+        "user_dir_VIDEOS":     "Videos",
     }
 else:
     T = {
@@ -54,6 +100,15 @@ else:
         "extract_sel":  "Extract selection",
         "go_up":        "Parent folder",
         "refresh":      "Refresh",
+        "home":         "Home",
+        "user_dir_DESKTOP":    "Desktop",
+        "user_dir_DOWNLOAD":   "Downloads",
+        "user_dir_TEMPLATES":  "Templates",
+        "user_dir_PUBLICSHARE":"Public",
+        "user_dir_DOCUMENTS":  "Documents",
+        "user_dir_MUSIC":      "Music",
+        "user_dir_PICTURES":   "Pictures",
+        "user_dir_VIDEOS":     "Videos",
     }
 
 # ---------------------------------------------------------------------------
@@ -267,18 +322,27 @@ class FilePanel(Gtk.Box):
         up_btn.set_has_frame(False)
         up_btn.connect("clicked", lambda _: self.navigate(os.path.dirname(self._path)))
 
-        self._path_lbl = Gtk.Label()
-        self._path_lbl.set_halign(Gtk.Align.START)
-        self._path_lbl.set_hexpand(True)
-        self._path_lbl.set_ellipsize(Pango.EllipsizeMode.START)
-        self._path_lbl.add_css_class("dim-label")
+        self._path_entry = Gtk.Entry()
+        self._path_entry.set_hexpand(True)
+        self._path_entry.connect("activate", self._on_path_activate)
+
+        self._user_dirs_btn = Gtk.MenuButton(icon_name="user-home-symbolic")
+        self._user_dirs_btn.set_has_frame(False)
+        self._user_dirs_pop = Gtk.Popover()
+        self._user_dirs_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self._user_dirs_box.set_margin_start(6); self._user_dirs_box.set_margin_end(6)
+        self._user_dirs_box.set_margin_top(6);   self._user_dirs_box.set_margin_bottom(6)
+        self._user_dirs_pop.set_child(self._user_dirs_box)
+        self._user_dirs_btn.set_popover(self._user_dirs_pop)
+        self._refresh_user_dirs()
 
         ref_btn = Gtk.Button(icon_name="view-refresh-symbolic")
         ref_btn.set_has_frame(False)
         ref_btn.connect("clicked", lambda _: self.refresh())
 
         hbar.append(up_btn)
-        hbar.append(self._path_lbl)
+        hbar.append(self._path_entry)
+        hbar.append(self._user_dirs_btn)
         hbar.append(ref_btn)
         self.append(hbar)
         self.append(Gtk.Separator())
@@ -318,8 +382,58 @@ class FilePanel(Gtk.Box):
         if not path or not os.path.isdir(path):
             return
         self._path = path
-        self._path_lbl.set_text(path)
+        self._path_entry.set_text(path)
         self.refresh()
+
+    def _on_path_activate(self, entry):
+        new_path = os.path.expanduser(entry.get_text().strip())
+        if os.path.isdir(new_path):
+            self.navigate(new_path)
+        else:
+            entry.set_text(self._path)
+
+    def _read_user_dirs(self):
+        user_dirs = [(T["home"], os.path.expanduser("~"))]
+        cfg = os.path.expanduser("~/.config/user-dirs.dirs")
+        if not os.path.isfile(cfg):
+            return user_dirs
+        try:
+            with open(cfg, "r", encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    m = re.match(r'XDG_(\w+)_DIR="?(.+?)"?$', line)
+                    if not m:
+                        continue
+                    key = m.group(1)
+                    raw_path = m.group(2)
+                    path = raw_path.replace("$HOME", os.path.expanduser("~"))
+                    path = os.path.expandvars(path)
+                    if not os.path.isabs(path):
+                        continue
+                    label = T.get(f"user_dir_{key}", key.replace("_", " ").title())
+                    user_dirs.append((label, path))
+        except Exception:
+            return [(T["home"], os.path.expanduser("~"))]
+        return user_dirs
+
+    def _refresh_user_dirs(self):
+        child = self._user_dirs_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self._user_dirs_box.remove(child)
+            child = nxt
+        for label, path in self._read_user_dirs():
+            btn = Gtk.Button(label=label)
+            btn.set_halign(Gtk.Align.FILL)
+            btn.connect("clicked", self._on_user_dir_clicked, path)
+            self._user_dirs_box.append(btn)
+
+    def _on_user_dir_clicked(self, btn, path):
+        if os.path.isdir(path):
+            self.navigate(path)
+        self._user_dirs_pop.popdown()
 
     def refresh(self):
         self._store.remove_all()
@@ -764,9 +878,9 @@ class ArchiveBrowserWindow(Adw.Window):
     def _extract_sel(self, _):
         names = self._get_selected_names()
         if names:
-            self._do_extract(names)
+            self._do_extract(names, flat=True)
 
-    def _do_extract(self, names):
+    def _do_extract(self, names, flat=False):
         dst = self._fs_panel.path
         self._prog.set_visible(True)
         self._prog.set_fraction(0.0)
@@ -775,8 +889,24 @@ class ArchiveBrowserWindow(Adw.Window):
             GLib.idle_add(self._prog.set_fraction, fraction)
 
         def _work():
-            _extract(self._archive, names, dst,
-                     progress_cb=_on_progress)
+            if flat and names:
+                tmp = tempfile.mkdtemp(prefix="ab_flat_")
+                try:
+                    _extract(self._archive, names, tmp, progress_cb=_on_progress)
+                    for root, dirs, files in os.walk(tmp):
+                        for fname in files:
+                            src = os.path.join(root, fname)
+                            out = os.path.join(dst, fname)
+                            base, ext = os.path.splitext(fname)
+                            n = 1
+                            while os.path.exists(out):
+                                out = os.path.join(dst, f"{base} ({n}){ext}")
+                                n += 1
+                            shutil.move(src, out)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+            else:
+                _extract(self._archive, names, dst, progress_cb=_on_progress)
             GLib.idle_add(self._extract_done, dst)
         threading.Thread(target=_work, daemon=True).start()
 
