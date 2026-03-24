@@ -303,6 +303,37 @@ def _icon_paintable(name):
             Gtk.TextDirection.LTR, Gtk.IconLookupFlags.FORCE_REGULAR)
     return None
 
+_ICON_FLAGS_REG = Gtk.IconLookupFlags.FORCE_REGULAR
+
+def _paintable_for_archive_entry(name, is_dir, collapsed, pixel_size=16):
+    """MIME-typed + full-color icons for archive tree rows (not symbolic)."""
+    theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+    if is_dir:
+        icon_name = "folder" if collapsed else "folder-open"
+        p = theme.lookup_icon(icon_name, None, pixel_size, 1,
+                              Gtk.TextDirection.LTR, _ICON_FLAGS_REG)
+        if p:
+            return p
+        gicon = Gio.content_type_get_icon("inode/directory")
+        return theme.lookup_by_gicon(gicon, pixel_size, 1,
+                                     Gtk.TextDirection.LTR, _ICON_FLAGS_REG)
+    basename = os.path.basename(name.rstrip("/"))
+    mime, _ = Gio.content_type_guess(basename, None)
+    if not mime:
+        mime = "application/octet-stream"
+    gicon = Gio.content_type_get_icon(mime)
+    p = theme.lookup_by_gicon(gicon, pixel_size, 1,
+                              Gtk.TextDirection.LTR, _ICON_FLAGS_REG)
+    if p:
+        return p
+    if isinstance(gicon, Gio.ThemedIcon):
+        for n in gicon.get_names():
+            p = theme.lookup_icon(n, None, pixel_size, 1,
+                                  Gtk.TextDirection.LTR, _ICON_FLAGS_REG)
+            if p:
+                return p
+    return None
+
 class FilePanel(Gtk.Box):
     __gtype_name__ = "ABFilePanel"
 
@@ -744,23 +775,20 @@ class ArchiveBrowserWindow(Adw.Window):
 
         if e.is_dir:
             collapsed = e.full_path in self._collapsed
-            icon.set_from_icon_name(
-                "folder-symbolic" if collapsed else "folder-open-symbolic")
+            paint = _paintable_for_archive_entry(e.name, True, collapsed)
+            if paint:
+                icon.set_from_paintable(paint)
+            else:
+                icon.set_from_icon_name(
+                    "folder" if collapsed else "folder-open")
             name.add_css_class("bold")
             size.set_text("▶" if collapsed else "▼")
         else:
-            ext   = os.path.splitext(e.name)[1].lower()
-            iname = "text-x-generic-symbolic"
-            for exts, ico in [
-                ({".jpg",".jpeg",".png",".gif",".webp",".svg"}, "image-x-generic-symbolic"),
-                ({".mp4",".mkv",".avi",".mov",".webm"},          "video-x-generic-symbolic"),
-                ({".mp3",".flac",".ogg",".wav"},                 "audio-x-generic-symbolic"),
-                ({".pdf"},                                        "application-pdf-symbolic"),
-                ({".zip",".7z",".rar",".tar"},                   "package-x-generic-symbolic"),
-                ({".py",".js",".sh",".c",".cpp"},               "text-x-script-symbolic"),
-            ]:
-                if ext in exts: iname = ico; break
-            icon.set_from_icon_name(iname)
+            paint = _paintable_for_archive_entry(e.name, False, False)
+            if paint:
+                icon.set_from_paintable(paint)
+            else:
+                icon.set_from_icon_name("text-x-generic")
             name.remove_css_class("bold")
             size.set_text(_fmt_size(e.size))
         # Afficher seulement le nom (pas le chemin complet)
@@ -944,7 +972,20 @@ class ArchiveBrowserWindow(Adw.Window):
 
     def _dnd_begin(self, drag_src, drag):
         icon = Gtk.DragIcon.get_for_drag(drag)
-        icon.set_child(Gtk.Image.new_from_icon_name("package-x-generic-symbolic"))
+        mime, _ = Gio.content_type_guess(os.path.basename(self._archive), None)
+        if not mime:
+            mime = "application/octet-stream"
+        gicon = Gio.content_type_get_icon(mime)
+        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        paint = theme.lookup_by_gicon(gicon, 32, 1, Gtk.TextDirection.LTR,
+                                      _ICON_FLAGS_REG)
+        img = Gtk.Image()
+        img.set_pixel_size(32)
+        if paint:
+            img.set_from_paintable(paint)
+        else:
+            img.set_from_icon_name("package-x-generic")
+        icon.set_child(img)
 
     def _dnd_end(self, drag_src, drag, delete_data):
         pass  # Cache conservé pour réutilisation
@@ -1006,7 +1047,7 @@ class ArchiveBrowserExtension(GObject.GObject, Nautilus.MenuProvider):
             name="ArchiveBrowser::Open",
             label=T["menu_label"],
             tip="Browse archive contents",
-            icon="package-x-generic-symbolic",
+            icon="package-x-generic",
         )
         item.connect("activate", lambda *_:
             ArchiveBrowserWindow(
