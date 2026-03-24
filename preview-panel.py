@@ -11,6 +11,7 @@
 #   nautilus -q
 
 import os
+import re
 import stat
 import time
 import hashlib
@@ -348,100 +349,269 @@ def _make_info_grid(rows):
     return grid
 
 # ---------------------------------------------------------------------------
-# X11 window positioning
+# X11 window positioning — dock beside the Nautilus window we care about
 # ---------------------------------------------------------------------------
 
-_nautilus_wid = None
+_target_nautilus_wid_dec = None
+
+WMCTRL_GEOMETRY_RE = re.compile(
+    r"^(0x[0-9a-f]+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+(\d+)\s+",
+    re.I,
+)
+
+PREVIEW_WIDTH_RATIO = float(os.environ.get("NAUTILUS_PREVIEW_WIDTH_RATIO", "0.34"))
+PREVIEW_WIDTH_MIN = int(os.environ.get("NAUTILUS_PREVIEW_WIDTH_MIN", "280"))
+PREVIEW_WIDTH_MAX = int(os.environ.get("NAUTILUS_PREVIEW_WIDTH_MAX", "640"))
+PREVIEW_SYNC_MS = int(os.environ.get("NAUTILUS_PREVIEW_SYNC_MS", "80"))
+
+# Stacking: after each click in Nautilus, Mutter raises the file manager and the
+# preview sinks behind. "1" = wmctrl add,above on the preview (stays visible).
+PREVIEW_ALWAYS_ABOVE = os.environ.get("NAUTILUS_PREVIEW_ALWAYS_ABOVE", "1").lower() not in (
+    "0", "false", "no", "off",
+)
 
 def _capture_nautilus_wid():
-    global _nautilus_wid
+    global _target_nautilus_wid_dec
     try:
         wid = subprocess.run(
             [XDOTOOL, "getactivewindow"],
             capture_output=True, text=True, timeout=2).stdout.strip()
-        if wid:
-            _nautilus_wid = wid
+        if wid.isdigit():
+            _target_nautilus_wid_dec = wid
     except Exception:
         pass
 
-def _get_nautilus_geometry():
+def _wmctrl_line_geometry(line):
+    m = WMCTRL_GEOMETRY_RE.match(line.strip())
+    if not m:
+        return None
+    wid_s, _desk, x, y, w, h = m.groups()
+    # Compare IDs as int — wmctrl uses 0x-padded hex strings that never match Python hex().
+    wid_i = int(wid_s, 16)
+    return wid_i, int(x), int(y), int(w), int(h)
+
+def _wmctrl_list_geometry():
     try:
-        ids = subprocess.run(
+        r = subprocess.run(
+            [WMCTRL, "-lG"], capture_output=True, text=True, timeout=2)
+        out = []
+        for line in r.stdout.splitlines():
+            g = _wmctrl_line_geometry(line)
+            if g:
+                out.append(g)
+        return out
+    except Exception:
+        return []
+
+def _geometry_for_wid_int(wid_i):
+    if wid_i is None:
+        return None
+    for row_wid, x, y, w, h in _wmctrl_list_geometry():
+        if row_wid == wid_i and w >= 200 and h >= 200:
+            return x, y, w, h
+    return None
+
+def _xdotool_window_geometry(wid_dec):
+    """Absolute position + inner geometry from xdotool (decimal window id)."""
+    if not wid_dec or not str(wid_dec).strip().isdigit():
+        return None
+    try:
+        r = subprocess.run(
+            [XDOTOOL, "getwindowgeometry", "--shell", str(wid_dec).strip()],
+            capture_output=True, text=True, timeout=2)
+        d = {}
+        for line in r.stdout.splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                d[k.strip()] = v.strip()
+        if {"X", "Y", "WIDTH", "HEIGHT"}.issubset(d.keys()):
+            return (
+                int(d["X"]),
+                int(d["Y"]),
+                int(d["WIDTH"]),
+                int(d["HEIGHT"]),
+            )
+        txt = r.stdout + getattr(r, "stderr", "")
+        m = re.search(r"Position:\s*(\d+)\s*,\s*(\d+)", txt)
+        gm = re.search(r"Geometry:\s*(\d+)\s*x\s*(\d+)", txt, re.I)
+        if m and gm:
+            return int(m.group(1)), int(m.group(2)), int(gm.group(1)), int(gm.group(2))
+    except Exception:
+        pass
+    return None
+
+def _geometry_best_nautilus_fallback():
+    try:
+        id_lines = subprocess.run(
             [XDOTOOL, "search", "--classname", "nautilus"],
             capture_output=True, text=True, timeout=2).stdout.strip().splitlines()
-        if not ids:
+        if not id_lines:
             return None
-        result = subprocess.run(
-            [WMCTRL, "-lG"], capture_output=True, text=True, timeout=2)
+        candidates = set()
+        for w in id_lines:
+            w = w.strip()
+            if not w.isdigit():
+                continue
+            candidates.add(int(w))
+        if not candidates:
+            return None
         best = None
-        for wid in ids:
-            wid_hex = hex(int(wid))
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 6:
-                    try:
-                        if int(parts[0], 16) == int(wid_hex, 16):
-                            w = int(parts[4])
-                            if w > 600 and (best is None or w > best["WIDTH"]):
-                                best = {"X": int(parts[2]), "Y": int(parts[3]),
-                                        "WIDTH": w, "HEIGHT": int(parts[5])}
-                    except Exception:
-                        continue
-        return best
+        for wid_i, x, y, bw, bh in _wmctrl_list_geometry():
+            if wid_i not in candidates:
+                continue
+            if bw < 320:
+                continue
+            area = bw * bh
+            if best is None or area > best[0]:
+                best = (area, (x, y, bw, bh))
+        return best[1] if best else None
     except Exception:
         return None
 
-def _snap_to_nautilus(window):
+def _get_target_nautilus_geometry():
+    if _target_nautilus_wid_dec and str(_target_nautilus_wid_dec).strip().isdigit():
+        tid = int(str(_target_nautilus_wid_dec).strip())
+        geo = _xdotool_window_geometry(str(tid))
+        if geo:
+            return geo
+        geo = _geometry_for_wid_int(tid)
+        if geo:
+            return geo
+    return _geometry_best_nautilus_fallback()
+
+def _screen_dimensions():
     try:
-        geo = _get_nautilus_geometry()
-        if not geo:
-            return
-        nau_x, nau_y = geo["X"], geo["Y"]
-        nau_w, nau_h = geo["WIDTH"], geo["HEIGHT"]
-        panel_w = 420
-
-        try:
-            import re
-            res = subprocess.run(["xdpyinfo"], capture_output=True, text=True, timeout=2)
-            m   = re.search(r"dimensions:\s+(\d+)x(\d+)", res.stdout)
-            screen_w = int(m.group(1)) if m else 1920
-        except Exception:
-            screen_w = 1920
-
-        x = nau_x + nau_w - 100 if nau_x + nau_w + panel_w <= screen_w else max(0, nau_x - panel_w + 100)
-        y = nau_y + 5
-
-        our_ids = subprocess.run(
-            [XDOTOOL, "search", "--classname", "nautilus"],
-            capture_output=True, text=True, timeout=2).stdout.strip().splitlines()
-
-        result  = subprocess.run([WMCTRL, "-lG"], capture_output=True, text=True, timeout=2)
-        best_id = None
-        best_w  = 9999
-        for wid in our_ids:
-            wid_hex = hex(int(wid))
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 6:
-                    try:
-                        if int(parts[0], 16) == int(wid_hex, 16):
-                            w = int(parts[4])
-                            if w < best_w:
-                                best_w  = w
-                                best_id = wid_hex
-                    except Exception:
-                        continue
-
-        def _do_move():
-            if best_id:
-                subprocess.run(
-                    [WMCTRL, "-ir", best_id, "-e", f"1,{x},{y},{panel_w},{nau_h}"],
-                    capture_output=True, timeout=2)
-            return False
-
-        GLib.timeout_add(500, _do_move)
+        res = subprocess.run(
+            ["xdpyinfo"], capture_output=True, text=True, timeout=2)
+        m = re.search(r"dimensions:\s+(\d+)x(\d+)", res.stdout)
+        if m:
+            return int(m.group(1)), int(m.group(2))
     except Exception:
         pass
+    return 1920, 1080
+
+def _compute_panel_rect(nau_x, nau_y, nau_w, nau_h):
+    panel_w = int(nau_w * PREVIEW_WIDTH_RATIO)
+    panel_w = max(PREVIEW_WIDTH_MIN, min(PREVIEW_WIDTH_MAX, panel_w))
+    max_w = max(PREVIEW_WIDTH_MIN, nau_w - 48)
+    panel_w = min(panel_w, max_w)
+    panel_h = nau_h
+    screen_w, screen_h = _screen_dimensions()
+    x = nau_x + nau_w - panel_w
+    y = nau_y
+    if x + panel_w > screen_w - 4:
+        x = max(0, nau_x - panel_w + 72)
+    x = max(0, min(x, max(0, screen_w - panel_w)))
+    y = max(0, min(y, max(0, screen_h - panel_h)))
+    return x, y, panel_w, panel_h
+
+def _preview_window_dec_str(win):
+    """Decimal X11 id for xdotool (must match getactivewindow)."""
+    try:
+        if not win.get_realized():
+            win.realize()
+        surf = win.get_surface()
+        if surf is None or not hasattr(surf, "get_xid"):
+            return None
+        xid = surf.get_xid()
+        return str(int(xid)) if xid else None
+    except Exception:
+        return None
+
+def _xdotool_move_resize(wid_dec, x, y, w, h):
+    if not wid_dec:
+        return False
+    w = max(int(w), 120)
+    h = max(int(h), 120)
+    try:
+        subprocess.run(
+            [XDOTOOL, "windowmove", "--sync", wid_dec, str(int(x)), str(int(y))],
+            capture_output=True, text=True, timeout=5)
+        subprocess.run(
+            [XDOTOOL, "windowsize", "--sync", wid_dec, str(w), str(h)],
+            capture_output=True, text=True, timeout=5)
+        return True
+    except Exception:
+        return False
+
+def _wmctrl_move_resize_decimal(wid_dec, x, y, w, h):
+    if not wid_dec:
+        return False
+    try:
+        subprocess.run(
+            [WMCTRL, "-i", "-r", wid_dec, "-e", f"1,{int(x)},{int(y)},{int(w)},{int(h)}"],
+            capture_output=True, text=True, timeout=3)
+        return True
+    except Exception:
+        return False
+
+def _wmctrl_stack_above(wid_dec, enable):
+    """Toggle _NET_WM_STATE_ABOVE so preview stays on top of Nautilus."""
+    if not wid_dec or not str(wid_dec).strip().isdigit():
+        return
+    flg = "add,above" if enable else "rem,above"
+    try:
+        subprocess.run(
+            [WMCTRL, "-i", "-r", str(wid_dec).strip(), "-b", flg],
+            capture_output=True, text=True, timeout=2)
+    except Exception:
+        pass
+
+def _xdotool_windowraise(panel):
+    """Raise preview in the stack (~never steals keyboard vs windowactivate)."""
+    wid = _preview_window_dec_str(panel)
+    if not wid:
+        return
+    try:
+        subprocess.run(
+            [XDOTOOL, "windowraise", wid],
+            capture_output=True, text=True, timeout=2)
+    except Exception:
+        pass
+
+def schedule_preview_raise(panel):
+    """After Nautilus handles selection, bump preview above it (often needs a short delay)."""
+
+    def bump(*_b):
+        _xdotool_windowraise(panel)
+        return False
+
+    GLib.idle_add(bump)
+    for ms in (35, 100, 250):
+        GLib.timeout_add(ms, bump)
+
+def snap_preview_panel_to_nautilus(panel):
+    """Resize/move only the preview window from live Nautilus geometry + ratio."""
+    wid = _preview_window_dec_str(panel)
+    if not wid:
+        return False
+    geo = _get_target_nautilus_geometry()
+    if not geo:
+        return False
+    nau_x, nau_y, nau_w, nau_h = geo
+    x, y, pw, ph = _compute_panel_rect(nau_x, nau_y, nau_w, nau_h)
+    sig = (x, y, pw, ph)
+    if getattr(panel, "_last_snap_sig", None) == sig:
+        w = getattr(panel, "_above_wid", None) or wid
+        if PREVIEW_ALWAYS_ABOVE:
+            _wmctrl_stack_above(w, True)
+        else:
+            _xdotool_windowraise(panel)
+        return True
+    panel._last_snap_sig = sig
+    panel.set_default_size(pw, ph)
+    ok = False
+    if _xdotool_move_resize(wid, x, y, pw, ph):
+        ok = True
+    else:
+        ok = _wmctrl_move_resize_decimal(wid, x, y, pw, ph)
+    if ok:
+        panel._above_wid = wid
+        if PREVIEW_ALWAYS_ABOVE:
+            _wmctrl_stack_above(wid, True)
+        else:
+            _xdotool_windowraise(panel)
+    return ok
 
 # ---------------------------------------------------------------------------
 # Preview Panel Window
@@ -462,6 +632,11 @@ class PreviewPanel(Gtk.Window):
         self._cache_order   = []
         self._debounce_id   = None
         self._is_open       = True
+        self._last_snap_sig = None
+        self._snap_timer_id = None
+        self._above_wid = None
+
+        # No set_transient_for: Mutter often pins/syncs transient children and ignores xdotool geometry.
 
         # Header
         header = Gtk.HeaderBar()
@@ -483,7 +658,8 @@ class PreviewPanel(Gtk.Window):
         self.set_child(scroll)
 
         self.connect("close-request", self._on_close)
-        self.connect("map", lambda *_: _snap_to_nautilus(self))
+        self.connect("map", self._on_mapped)
+        self.connect("unmap", self._on_unmapped)
 
         # Escape
         ctrl = Gtk.ShortcutController()
@@ -493,7 +669,52 @@ class PreviewPanel(Gtk.Window):
         ctrl.add_shortcut(Gtk.Shortcut.new(t, a))
         self.add_controller(ctrl)
 
+    def _on_mapped(self, *_):
+        self._last_snap_sig = None
+
+        def snap_once(*_):
+            snap_preview_panel_to_nautilus(self)
+            if PREVIEW_ALWAYS_ABOVE:
+                w = _preview_window_dec_str(self)
+                if w:
+                    self._above_wid = w
+                    _wmctrl_stack_above(w, True)
+            return False
+
+        GLib.idle_add(snap_once)
+        for ms in (30, 80, 160, 400, 900):
+            GLib.timeout_add(ms, snap_once)
+        self._start_snap_timer()
+
+    def _on_unmapped(self, *_):
+        self._stop_snap_timer()
+
+    def _start_snap_timer(self):
+        if self._snap_timer_id is not None:
+            return
+
+        def tick():
+            if not self._is_open or not self.get_mapped():
+                self._snap_timer_id = None
+                return False
+            snap_preview_panel_to_nautilus(self)
+            if PREVIEW_ALWAYS_ABOVE and self._above_wid:
+                _wmctrl_stack_above(self._above_wid, True)
+            return True
+
+        self._snap_timer_id = GLib.timeout_add(PREVIEW_SYNC_MS, tick)
+
+    def _stop_snap_timer(self):
+        if self._snap_timer_id is not None:
+            GLib.source_remove(self._snap_timer_id)
+            self._snap_timer_id = None
+
     def _on_close(self, *_):
+        self._stop_snap_timer()
+        w = self._above_wid or _preview_window_dec_str(self)
+        if w and PREVIEW_ALWAYS_ABOVE:
+            _wmctrl_stack_above(w, False)
+        self._above_wid = None
         self._is_open = False
         return False
 
@@ -512,7 +733,20 @@ class PreviewPanel(Gtk.Window):
             self._title_lbl.set_text(os.path.basename(path))
             thumb, text_data, rows = self._cache[path]
             GObject.idle_add(self._apply, self._loading_token, thumb, text_data, rows, path)
+            schedule_preview_raise(self)
+            if PREVIEW_ALWAYS_ABOVE:
+                w = self._above_wid or _preview_window_dec_str(self)
+                if w:
+                    self._above_wid = w
+                    _wmctrl_stack_above(w, True)
             return
+
+        schedule_preview_raise(self)
+        if PREVIEW_ALWAYS_ABOVE:
+            w = self._above_wid or _preview_window_dec_str(self)
+            if w:
+                self._above_wid = w
+                _wmctrl_stack_above(w, True)
 
         self._debounce_id = GLib.timeout_add(250, self._load, path)
 
@@ -670,6 +904,13 @@ class PreviewPanel(Gtk.Window):
         if rows:
             self._content_box.append(_make_info_grid(rows))
 
+        schedule_preview_raise(self)
+        if PREVIEW_ALWAYS_ABOVE:
+            w = self._above_wid or _preview_window_dec_str(self)
+            if w:
+                self._above_wid = w
+                _wmctrl_stack_above(w, True)
+
         return False
 
     def _no_preview(self):
@@ -756,4 +997,5 @@ class PreviewPanelExtension(GObject.GObject, Nautilus.MenuProvider):
     def _on_activate(self, _item, nfile):
         path = nfile.get_location().get_path()
         self._last_path = path
+        _capture_nautilus_wid()
         self._ensure(path)
