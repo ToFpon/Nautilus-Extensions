@@ -376,11 +376,13 @@ All formats supported by `libarchive` — zip, 7z, tar, gz, bz2, xz, rar, cab, i
 - 📂 **Folder tree** with collapse/expand — subfolders collapsed by default, click to expand
 - 🔍 **Live filter** — search files by name instantly
 - 🖱️ **Drag & Drop** — drag files from the archive directly into any folder in the right panel or in Nautilus
-- 📦 **Extract all** — extracts everything to the right panel's current folder
-- ✅ **Extract selection** — extracts only selected files
+- 📦 **Extract all** — extracts everything (with full folder structure) to the right panel's current folder
+- ✅ **Extract selection** — extracts selected files **flat** (no folder structure) directly to destination
 - 🖱️ **Double-click** on a file — extracts and opens with the default application
-- 📁 **Right panel navigation** — browse your filesystem to pick the destination
+- 📁 **Editable address bar** — type any path manually and press Enter to navigate
+- ⭐ **XDG bookmarks button** — quick access to Home, Documents, Downloads, Pictures, Music, Videos and GTK bookmarks
 - 🗃️ **Intelligent DnD cache** — extracted files are cached, repeated drags are instantaneous
+- 📊 **Real progress bar** — actual percentage during extraction (0→100%)
 
 **Dependencies:**
 
