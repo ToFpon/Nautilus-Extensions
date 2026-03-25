@@ -579,11 +579,10 @@ class ArchiveBrowserWindow(Adw.Window):
         self._lv.add_css_class("navigation-sidebar")
         self._lv.connect("activate", self._on_activate)
 
-        # Simple clic sur dossier = expand/collapse
-        click = Gtk.GestureClick()
-        click.set_button(1)
-        click.connect("pressed", self._on_archive_row_click)
-        self._lv.add_controller(click)
+        # On évite un GestureClick global avec calcul d'index via "y":
+        # ça peut créer des zones de clic imprécises (scroll, marges, hauteurs
+        # variables). On laisse GTK gérer la zone cliquable et on utilise le
+        # signal natif "activate" pour ouvrir/fermer les dossiers.
 
 
 
@@ -763,6 +762,17 @@ class ArchiveBrowserWindow(Adw.Window):
         box.append(icon); box.append(name); box.append(size)
         item.set_child(box)
 
+        # Clic simple sur une ligne dossier => toggle expand/collapse.
+        # On évite le calcul manuel via "y" pour que les click zones soient
+        # cohérentes partout.
+        click = Gtk.GestureClick()
+        click.set_button(1)
+        click.connect(
+            "pressed",
+            lambda g, n_press, x, y, li=item: self._on_row_single_click(g, n_press, x, y, li),
+        )
+        box.add_controller(click)
+
     def _bind(self, fct, item):
         e    = item.get_item()
         box  = item.get_child()
@@ -793,6 +803,22 @@ class ArchiveBrowserWindow(Adw.Window):
             size.set_text(_fmt_size(e.size))
         # Afficher seulement le nom (pas le chemin complet)
         name.set_text(os.path.basename(e.name.rstrip("/")))
+
+    def _on_row_single_click(self, gesture, n_press, x, y, list_item):
+        """Toggle expand/collapse sur clic simple de la ligne dossier."""
+        if n_press != 1:
+            return
+        e = list_item.get_item()
+        if not e or not e.is_dir:
+            return
+        saved = self._selection_path_set()
+        saved.add(e.full_path.rstrip("/"))
+        if e.full_path in self._collapsed:
+            self._collapsed.discard(e.full_path)
+        else:
+            self._collapsed.add(e.full_path)
+        self._refresh_store()
+        self._apply_selection_paths(saved)
 
     # -- Recherche -----------------------------------------------------------
 
