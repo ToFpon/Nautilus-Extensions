@@ -579,10 +579,10 @@ class ArchiveBrowserWindow(Adw.Window):
         self._lv.add_css_class("navigation-sidebar")
         self._lv.connect("activate", self._on_activate)
 
-        # Clic simple pour expand/collapse + prefetch DnD
+        # Simple clic sur dossier = expand/collapse
         click = Gtk.GestureClick()
         click.set_button(1)
-        click.connect("pressed", self._on_click)
+        click.connect("pressed", self._on_archive_row_click)
         self._lv.add_controller(click)
 
 
@@ -830,27 +830,55 @@ class ArchiveBrowserWindow(Adw.Window):
                 return path
         return None
 
-    def _on_click(self, gesture, n, x, y):
-        """Simple clic — toggle collapse pour les dossiers."""
-        widget = gesture.get_widget()
-        row    = widget.get_first_child()
-        idx    = 0; cumul = 0
+    def _list_row_index_at_y(self, widget, y):
+        row = widget.get_first_child()
+        idx, cumul = 0, 0
         while row:
             h = row.get_height()
             if cumul <= y < cumul + h:
-                break
-            cumul += h; idx += 1
+                return idx
+            cumul += h
+            idx += 1
             row = row.get_next_sibling()
-        if idx >= self._store.get_n_items():
+        return None
+
+    def _selection_path_set(self):
+        sel = self._sel.get_selection()
+        paths = set()
+        for i in range(self._store.get_n_items()):
+            if sel.contains(i):
+                paths.add(self._store.get_item(i).full_path.rstrip("/"))
+        return paths
+
+    def _apply_selection_paths(self, paths):
+        if not paths:
+            return
+        first = True
+        for i in range(self._store.get_n_items()):
+            key = self._store.get_item(i).full_path.rstrip("/")
+            if key in paths:
+                self._sel.select_item(i, first)
+                first = False
+
+    def _on_archive_row_click(self, gesture, n_press, x, y):
+        """Simple clic sur dossier = ouvrir/fermer l'arbre."""
+        if n_press != 1:
+            return
+        widget = gesture.get_widget()
+        idx = self._list_row_index_at_y(widget, y)
+        if idx is None or idx >= self._store.get_n_items():
             return
         e = self._store.get_item(idx)
         if not e or not e.is_dir:
             return
+        saved = self._selection_path_set()
+        saved.add(e.full_path.rstrip("/"))
         if e.full_path in self._collapsed:
             self._collapsed.discard(e.full_path)
         else:
             self._collapsed.add(e.full_path)
         self._refresh_store()
+        self._apply_selection_paths(saved)
 
     def _on_activate(self, lv, pos):
         """Double-clic : extrait et ouvre."""
@@ -918,10 +946,26 @@ class ArchiveBrowserWindow(Adw.Window):
 
         def _work():
             if flat and names:
+                # Séparer fichiers et dossiers
+                selected_entries = {e.full_path: e for e in self._tree
+                                    if e.full_path in names or e.name in names}
+                dirs_selected  = [n for n in names
+                                  if any(e.is_dir and e.full_path == n
+                                         for e in self._tree)]
+                files_selected = [n for n in names if n not in dirs_selected]
+
                 tmp = tempfile.mkdtemp(prefix="ab_flat_")
                 try:
                     _extract(self._archive, names, tmp, progress_cb=_on_progress)
+                    # Fichiers → extraction plate (sans arborescence)
                     for root, dirs, files in os.walk(tmp):
+                        # Ignorer les sous-dossiers des dossiers sélectionnés
+                        rel = os.path.relpath(root, tmp)
+                        is_in_selected_dir = any(
+                            rel == d.rstrip("/") or rel.startswith(d.rstrip("/") + os.sep)
+                            for d in dirs_selected)
+                        if is_in_selected_dir:
+                            continue  # traité séparément
                         for fname in files:
                             src = os.path.join(root, fname)
                             out = os.path.join(dst, fname)
@@ -931,6 +975,17 @@ class ArchiveBrowserWindow(Adw.Window):
                                 out = os.path.join(dst, f"{base} ({n}){ext}")
                                 n += 1
                             shutil.move(src, out)
+                    # Dossiers → garder la structure
+                    for d in dirs_selected:
+                        folder_name = os.path.basename(d.rstrip("/"))
+                        src_dir = os.path.join(tmp, d.rstrip("/"))
+                        if os.path.isdir(src_dir):
+                            out_dir = os.path.join(dst, folder_name)
+                            if os.path.exists(out_dir):
+                                shutil.copytree(src_dir, out_dir,
+                                                dirs_exist_ok=True)
+                            else:
+                                shutil.move(src_dir, out_dir)
                 finally:
                     shutil.rmtree(tmp, ignore_errors=True)
             else:
