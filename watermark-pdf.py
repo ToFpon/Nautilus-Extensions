@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # NAME: Watermark PDF – Nautilus Python Extension
-# REQUIRES: python3-nautilus (>= 4.0), ghostscript, python3-gi, gir1.2-adw-1
+# REQUIRES: python3-nautilus (>= 4.0), imagemagick, python3-gi, gir1.2-adw-1
 # INSTALL:
 #   cp watermark-pdf.py ~/.local/share/nautilus-python/extensions/
 #   rm -rf ~/.local/share/nautilus-python/extensions/__pycache__
@@ -43,7 +43,7 @@ if _lang.startswith("fr"):
         "processing":     "Application du filigrane…",
         "done_title":     "Filigrane ajouté",
         "done_msg":       "{name} a été traité avec succès.",
-        "err_gs":         "ghostscript est introuvable. Veuillez l'installer.",
+        "err_gs":         "imagemagick est introuvable. Veuillez l'installer.",
         "err_empty":      "Le texte du filigrane ne peut pas être vide.",
         "err_failed":     "L'opération a échoué (code {code}).",
         "cancel":         "Annuler",
@@ -73,7 +73,7 @@ else:
         "processing":     "Applying watermark…",
         "done_title":     "Watermark applied",
         "done_msg":       "{name} has been successfully watermarked.",
-        "err_gs":         "ghostscript is not installed. Please install it first.",
+        "err_gs":         "imagemagick is not installed. Please install it first.",
         "err_empty":      "Watermark text cannot be empty.",
         "err_failed":     "Operation failed (exit code {code}).",
         "cancel":         "Cancel",
@@ -87,7 +87,14 @@ else:
         ],
     }
 
-GS_BIN = shutil.which("ghostscript") or shutil.which("gs") or "/usr/bin/ghostscript"
+CONVERT_BIN = shutil.which("convert") or "/usr/bin/convert"
+STAMP_TIMEOUT_S = int(os.environ.get("WATERMARK_STAMP_TIMEOUT_S", "180"))
+WATERMARK_DIAG_LAND_STEPX_MUL = float(os.environ.get("WATERMARK_DIAG_LAND_STEPX_MUL", "0.78"))
+WATERMARK_DIAG_LAND_STEPY_MUL = float(os.environ.get("WATERMARK_DIAG_LAND_STEPY_MUL", "1.18"))
+WATERMARK_DIAG_POR_STEPX_MUL  = float(os.environ.get("WATERMARK_DIAG_POR_STEPX_MUL",  "0.92"))
+WATERMARK_DIAG_POR_STEPY_MUL  = float(os.environ.get("WATERMARK_DIAG_POR_STEPY_MUL",  "0.92"))
+WATERMARK_DIAG_MASTER_STEPX_MUL = float(os.environ.get("WATERMARK_DIAG_MASTER_STEPX_MUL", "0.92"))
+WATERMARK_DIAG_MASTER_STEPY_MUL = float(os.environ.get("WATERMARK_DIAG_MASTER_STEPY_MUL", "0.92"))
 
 
 # ---------------------------------------------------------------------------
@@ -111,84 +118,131 @@ def _suggest_output(path: str) -> str:
     base, ext = os.path.splitext(path)
     return f"{base}{T['postpend']}{ext}"
 
-def _build_watermark_pdf(text, opacity, angle_deg, font_size, color_rgb, diagonal,
-                          page_w=595, page_h=842):
-    """Génère un PDF de filigrane en Python pur.
-    Transparence réelle via ExtGState (/ca /CA) — PDF 1.4 standard, sans GS."""
-    import math
-    r, g, b   = [float(x) for x in color_rgb.split()]
-    angle_rad = math.radians(angle_deg)
-    cos_a     = math.cos(angle_rad)
-    sin_a     = math.sin(angle_rad)
-    cx, cy    = page_w / 2, page_h / 2
-    tw        = len(text) * font_size * 0.55
-    th        = font_size * 0.35
+def _build_watermark_pdf(text, opacity, angle_deg, font_size, color_rgb,
+                          diagonal, page_w=595, page_h=842):
+    """Génère un PDF filigrane 1-page via PNG alpha (ImageMagick) puis embarquement SMask (maison via PIL)."""
+    import tempfile, subprocess, zlib
 
-    ps_text = text.replace("\\", "\\\\").replace("(", r"\(").replace(")", r"\)")
+    r, g, b = [float(x) for x in color_rgb.split()]
+    fill    = "rgba({},{},{},{:.3f})".format(
+                int(r*255), int(g*255), int(b*255), opacity)
 
-    def tm_line(tx_local, ty_local):
-        ex = cx + tx_local * cos_a - ty_local * sin_a
-        ey = cy + tx_local * sin_a + ty_local * cos_a
-        return "{:.6f} {:.6f} {:.6f} {:.6f} {:.2f} {:.2f} Tm ({}) Tj".format(
-            cos_a, sin_a, -sin_a, cos_a, ex, ey, ps_text)
+    fd_png, tmp_png = tempfile.mkstemp(suffix=".png")
+    os.close(fd_png)
 
-    # Step basé sur la largeur réelle du texte + marge de 20%
-    step  = max(int(tw * 1.2), int(font_size * 2))
-    lines = [
-        "q",
-        # Clipping rectangle = exactement la page, rien ne dépasse
-        "0 0 {:.2f} {:.2f} re W n".format(page_w, page_h),
-        "/GS1 gs",
-        "{:.3f} {:.3f} {:.3f} rg".format(r, g, b),
-        "BT", "/F1 {} Tf".format(font_size),
-    ]
+    text_w = int(font_size * 0.65 * len(text))
+    step_x = max(text_w + int(font_size * 3), int(page_w * 0.35))
+    step_y = max(int(font_size * 3.5), int(page_h * 0.18))
+
+    # Eviter le clipping des lettres (rotation + placement) :
+    # on génère une toile un peu plus grande.
+    page_wi = float(page_w)
+    page_hi = float(page_h)
+    expand = 1.0 + min(0.12, max(0.04, float(font_size) / 1200.0))
+
+    # Pour la répétition diagonale, on génère un "masque master" carré.
+    # Ensuite le stamping fait un scaling uniforme + centrage, ce qui rend
+    # le motif plus identique entre portrait et paysage.
     if diagonal:
-        rng = range(-step * 3, step * 3 + 1, step)
-        for ty in rng:
-            for tx in rng:
-                lines.append(tm_line(tx, ty))
+        master = max(page_wi, page_hi)
+        work_w = int(master * expand + 0.5)
+        work_h = work_w
+        off_x  = 0.0
+        off_y  = 0.0
     else:
-        lines.append(tm_line(-tw / 2, -th / 2))
-    lines  += ["ET", "Q"]
-    stream  = "\n".join(lines).encode("latin-1")
-    slen    = len(stream)
+        work_w = int(page_wi * expand + 0.5)
+        work_h = int(page_hi * expand + 0.5)
+        off_x  = (work_w - page_wi) / 2.0
+        off_y  = (work_h - page_hi) / 2.0
 
-    o = []
-    o.append(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
-    o.append(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
-    o.append((
-        "3 0 obj\n<< /Type /Page /Parent 2 0 R "
-        "/MediaBox [0 0 {:.2f} {:.2f}] /Contents 4 0 R "
-        "/Resources << /Font << /F1 5 0 R >> /ExtGState << /GS1 6 0 R >> >> "
-        ">>\nendobj\n".format(page_w, page_h)
-    ).encode("latin-1"))
-    o.append(
-        "4 0 obj\n<< /Length {} >>\nstream\n".format(slen).encode("latin-1")
-        + stream + b"\nendstream\nendobj\n"
-    )
-    o.append(b"5 0 obj\n<< /Type /Font /Subtype /Type1 "
-             b"/BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n")
-    o.append((
-        "6 0 obj\n<< /Type /ExtGState /ca {:.3f} /CA {:.3f} >>\nendobj\n"
-        .format(opacity, opacity)
-    ).encode("latin-1"))
+    draws = []
+    if diagonal:
+        # Masque master : recalculer pas uniquement via une "taille effective"
+        # (le plus petit côté) pour garder la même densité visuelle en portrait
+        # et en paysage.
+        effective = min(page_wi, page_hi)
+        step_x = max(text_w + int(font_size * 3), int(effective * 0.35))
+        step_y = max(int(font_size * 3.5), int(effective * 0.18))
 
-    pdf     = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
-    offsets = []
-    pos     = len(pdf)
-    for chunk in o:
-        offsets.append(pos)
-        pdf += chunk
-        pos += len(chunk)
+        step_x = max(1, int(step_x * WATERMARK_DIAG_MASTER_STEPX_MUL))
+        step_y = max(1, int(step_y * WATERMARK_DIAG_MASTER_STEPY_MUL))
 
-    xref_pos = pos
-    xref     = b"xref\n0 7\n0000000000 65535 f \n"
-    for off in offsets:
-        xref += "{:010d} 00000 n \n".format(off).encode()
-    trailer  = "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n".format(
-        xref_pos).encode("latin-1")
-    return pdf + xref + trailer
+        cx = work_w / 2.0
+        cy = work_h / 2.0
+        for ty in range(-int(work_h), int(work_h * 2), step_y):
+            for tx in range(-int(work_w), int(work_w * 2), step_x):
+                d = "translate {},{} rotate {} text 0,0 '{}'".format(
+                    tx + cx, ty + cy, -angle_deg, text)
+                draws += ["-draw", d]
+    else:
+        cx = int(page_w // 2 + off_x)
+        cy = int(page_h // 2 + off_y)
+        d = "translate {},{} rotate {} text 0,0 '{}'".format(
+            cx, cy, -angle_deg, text)
+        draws = ["-draw", d]
 
+    cmd = [CONVERT_BIN,
+           "-size", "{}x{}".format(work_w, work_h),
+           "xc:none", "-font", "Arial",
+           "-pointsize", str(font_size),
+           "-fill", fill, "-gravity", "None",
+           ] + draws + [tmp_png]
+
+    # Timeout pour éviter les blocages si ImageMagick reste coincé
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if res.returncode != 0:
+        os.remove(tmp_png)
+        raise RuntimeError(res.stderr)
+
+    try:
+        from PIL import Image
+        img     = Image.open(tmp_png).convert("RGBA")
+        w, h    = img.size
+        rgb_c   = zlib.compress(img.convert("RGB").tobytes(), 6)
+        alpha_c = zlib.compress(img.split()[3].tobytes(), 6)
+        cont_c  = zlib.compress(
+            "{} 0 0 {} 0 0 cm /Im1 Do".format(int(w), int(h)).encode(), 6)
+
+        def mk(s):
+            return s.encode() if isinstance(s, str) else s
+
+        o1 = mk("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+        o2 = mk("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+        o3 = mk("3 0 obj\n<< /Type /Page /Parent 2 0 R"
+                " /MediaBox [0 0 {} {}] /Contents 4 0 R"
+                " /Resources << /XObject << /Im1 5 0 R >> >>"
+                " >>\nendobj\n".format(int(w), int(h)))
+        o4 = (mk("4 0 obj\n<< /Length {} /Filter /FlateDecode >>\nstream\n"
+                 .format(len(cont_c)))
+              + cont_c + mk("\nendstream\nendobj\n"))
+        o5 = (mk("5 0 obj\n<< /Type /XObject /Subtype /Image"
+                 " /Width {} /Height {} /ColorSpace /DeviceRGB"
+                 " /BitsPerComponent 8 /Filter /FlateDecode"
+                 " /SMask 6 0 R /Length {} >>\nstream\n".format(w, h, len(rgb_c)))
+              + rgb_c + mk("\nendstream\nendobj\n"))
+        o6 = (mk("6 0 obj\n<< /Type /XObject /Subtype /Image"
+                 " /Width {} /Height {} /ColorSpace /DeviceGray"
+                 " /BitsPerComponent 8 /Filter /FlateDecode"
+                 " /Length {} >>\nstream\n".format(w, h, len(alpha_c)))
+              + alpha_c + mk("\nendstream\nendobj\n"))
+
+        objs = [o1, o2, o3, o4, o5, o6]
+        pdf  = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+        offs, pos = [], len(pdf)
+        for chunk in objs:
+            offs.append(pos); pdf += chunk; pos += len(chunk)
+        n  = len(objs) + 1
+        xp = pos
+        xref = "xref\n0 {}\n0000000000 65535 f \n".format(n).encode()
+        for off in offs:
+            xref += "{:010d} 00000 n \n".format(off).encode()
+        trailer = (
+            "trailer\n<< /Size {} /Root 1 0 R >>\n"
+            "startxref\n{}\n%%EOF\n".format(n, xp)
+        ).encode()
+        return pdf + xref + trailer
+    finally:
+        os.remove(tmp_png)
 
 class WatermarkDialog(Adw.Window):
     __gtype_name__ = "WatermarkPDFSettingsDialog"
@@ -220,8 +274,8 @@ class WatermarkDialog(Adw.Window):
         outer.append(self._section_label(f"{T['size_label']} : "))
         size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self._size_spin = Gtk.SpinButton.new_with_range(10, 200, 5)
-        self._size_spin.set_value(25)
-        self._size_label = Gtk.Label(label="25 pt")
+        self._size_spin.set_value(60)
+        self._size_label = Gtk.Label(label="60 pt")
         self._size_spin.connect("value-changed", lambda s: self._size_label.set_text(f"{int(s.get_value())} pt"))
         size_box.append(self._size_spin)
         size_box.append(self._size_label)
@@ -231,10 +285,10 @@ class WatermarkDialog(Adw.Window):
         outer.append(self._section_label(f"{T['opacity_label']} : "))
         opacity_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self._opacity_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.05, 1.0, 0.05)
-        self._opacity_scale.set_value(0.15)
+        self._opacity_scale.set_value(0.3)
         self._opacity_scale.set_hexpand(True)
         self._opacity_scale.set_draw_value(False)
-        self._opacity_lbl = Gtk.Label(label="15%")
+        self._opacity_lbl = Gtk.Label(label="30%")
         self._opacity_scale.connect("value-changed", lambda s: self._opacity_lbl.set_text(f"{int(s.get_value()*100)}%"))
         opacity_box.append(self._opacity_scale)
         opacity_box.append(self._opacity_lbl)
@@ -274,9 +328,8 @@ class WatermarkDialog(Adw.Window):
         outer.append(self._section_label(T["position_label"]))
         pos_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._pos_center = Gtk.CheckButton(label=T["pos_center"])
-#        self._pos_center.set_active(True)
+        self._pos_center.set_active(True)
         self._pos_diagonal = Gtk.CheckButton(label=T["pos_diagonal"])
-        self._pos_diagonal.set_active(True)
         self._pos_diagonal.set_group(self._pos_center)
         pos_box.append(self._pos_center)
         pos_box.append(self._pos_diagonal)
@@ -403,6 +456,10 @@ class WatermarkProgressDialog(Adw.Window):
         self._bar.set_pulse_step(0.05)
         box.append(self._bar)
 
+        self._status_lbl = Gtk.Label(label="")
+        self._status_lbl.add_css_class("dim-label")
+        box.append(self._status_lbl)
+
         cancel_btn = Gtk.Button(label=T["cancel"])
         cancel_btn.connect("clicked", self._on_cancel)
         box.append(cancel_btn)
@@ -419,6 +476,12 @@ class WatermarkProgressDialog(Adw.Window):
             self._bar.pulse()
             return True
         return False
+
+    def _set_status(self, text: str):
+        try:
+            self._status_lbl.set_text(text)
+        except Exception:
+            pass
 
     def _on_cancel(self, _btn):
         if self._process and self._process.poll() is None:
@@ -453,9 +516,26 @@ class WatermarkProgressDialog(Adw.Window):
 
         # Génération du PDF de filigrane en Python pur (plus de GS ici)
         try:
+            GObject.idle_add(self._set_status, "Génération du filigrane…")
+            # Générer le watermark avec les dimensions réelles d'au moins une
+            # page pour que la répétition (mode diagonale) soit correcte en
+            # paysage vs portrait.
+            page_w = 595
+            page_h = 842
+            try:
+                from pypdf import PdfReader as _PdfReader
+                _src_reader = _PdfReader(self._src)
+                if _src_reader.pages:
+                    page_w = float(_src_reader.pages[0].mediabox.width)
+                    page_h = float(_src_reader.pages[0].mediabox.height)
+            except Exception:
+                # Si on ne peut pas lire les dimensions, on retombe sur A4
+                # par défaut (mieux que de planter).
+                pass
             wm_pdf = _build_watermark_pdf(
                 text=s["text"], opacity=s["opacity"], angle_deg=s["angle"],
-                font_size=s["size"], color_rgb=s["color"], diagonal=s["diagonal"]
+                font_size=s["size"], color_rgb=s["color"], diagonal=s["diagonal"],
+                page_w=page_w, page_h=page_h
             )
             with open(self._wm_tmp, "wb") as f:
                 f.write(wm_pdf)
@@ -479,19 +559,66 @@ class WatermarkProgressDialog(Adw.Window):
             wm_w = float(wm_page.mediabox.width)
             wm_h = float(wm_page.mediabox.height)
 
-            src_reader = PdfReader(self._src)
-            writer     = PdfWriter()
+            # Certaines PDFs peuvent provoquer un traitement très long/bloquant
+            # côté pypdf pendant writer.write(). Pour éviter que ça reste figé
+            # sans retour, on lance le stamping dans un sous-process avec timeout.
+            GObject.idle_add(self._set_status, "Application… (filigrane sur pages)")
+            GObject.idle_add(self._bar.set_fraction, 0.05)
 
-            for page in src_reader.pages:
-                pw = float(page.mediabox.width)
-                ph = float(page.mediabox.height)
-                # Adapter le filigrane aux dimensions de chaque page
-                t = Transformation().scale(pw / wm_w, ph / wm_h)
-                page.merge_transformed_page(wm_page, t)
-                writer.add_page(page)
+            diagonal_flag = bool(s.get("diagonal", False))
+            stamp_code = r'''
+import sys
+from pypdf import PdfReader, PdfWriter, Transformation
 
-            with open(self._tmp, "wb") as out:
-                writer.write(out)
+src = sys.argv[1]
+wm  = sys.argv[2]
+out = sys.argv[3]
+diag = sys.argv[4].lower() in ("1","true","yes","on")
+
+wm_reader  = PdfReader(wm)
+wm_page    = wm_reader.pages[0]
+wm_w = float(wm_page.mediabox.width)
+wm_h = float(wm_page.mediabox.height)
+
+src_reader = PdfReader(src)
+writer     = PdfWriter()
+
+for page in src_reader.pages:
+    pw = float(page.mediabox.width)
+    ph = float(page.mediabox.height)
+    if diag:
+        # Pour un masque "master" carré, on veut conserver la densité
+        # visuelle portrait/paysage en scalant sur la dimension maximale
+        # (crop sur l'autre dimension) et en ancrant en bas-gauche.
+        s_scale = max(pw / wm_w, ph / wm_h)
+        tx = 0
+        ty = 0
+    else:
+        # Mode centre (non-diagonal) : fit complet et centrage.
+        s_scale = min(pw / wm_w, ph / wm_h)
+        tx = (pw - wm_w * s_scale) / 2
+        ty = (ph - wm_h * s_scale) / 2
+    t  = Transformation().scale(sx=s_scale, sy=s_scale).translate(tx=tx, ty=ty)
+    page.merge_transformed_page(wm_page, t)
+    writer.add_page(page)
+
+with open(out, "wb") as f:
+    writer.write(f)
+'''
+
+            import sys as _sys
+            try:
+                rc = subprocess.run(
+                    [_sys.executable, "-c", stamp_code,
+                     self._src, self._wm_tmp, self._tmp, "1" if diagonal_flag else "0"],
+                    capture_output=True, text=True, timeout=STAMP_TIMEOUT_S
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Timeout while applying watermark (pypdf > 180s).")
+            if rc.returncode != 0:
+                raise RuntimeError(rc.stderr.strip() or f"pypdf stamp failed (code {rc.returncode})")
+
+            GObject.idle_add(self._bar.set_fraction, 1.0)
 
         except Exception as exc:
             self._cleanup()
@@ -501,20 +628,22 @@ class WatermarkProgressDialog(Adw.Window):
             try: os.remove(self._wm_tmp)
             except FileNotFoundError: pass
 
-        # Étape 3 optionnelle : flatten (rasterisation via GS)
+        # Étape 3 optionnelle : flatten (rasterisation via ImageMagick)
         if s.get("flatten", False):
             flat_fd, self._flat_tmp = tempfile.mkstemp(suffix=".pdf", dir=dst_dir)
             os.close(flat_fd)
+            dpi = s.get("dpi", 200)
             cmd_flat = [
-                GS_BIN,
-                "-sDEVICE=pdfimage24",
-                f"-r{s.get('dpi', 200)}",
-                "-dNOPAUSE", "-dQUIET", "-dBATCH",
-                f"-sOutputFile={self._flat_tmp}",
+                CONVERT_BIN,
+                "-density", str(dpi),
+                "-compress", "jpeg",
+                "-quality", "92",
                 self._tmp,
+                self._flat_tmp,
             ]
             try:
-                rc_flat = subprocess.run(cmd_flat).returncode
+                GObject.idle_add(self._set_status, "Flatten (rasterisation)…")
+                rc_flat = subprocess.run(cmd_flat, capture_output=True, timeout=120).returncode
             except Exception as exc:
                 GObject.idle_add(self._finish_error, str(exc))
                 return
@@ -578,7 +707,7 @@ class WatermarkPDFExtension(GObject.GObject, Nautilus.MenuProvider):
         return []
 
     def _on_activate(self, _item, pdf_items):
-        if not os.path.isfile(GS_BIN) or not os.access(GS_BIN, os.X_OK):
+        if not os.path.isfile(CONVERT_BIN) or not os.access(CONVERT_BIN, os.X_OK):
             _show_message(T["err_gs"])
             return
 
