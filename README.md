@@ -391,6 +391,8 @@ Extraction via `7z` and `unrar` (full RAR5 support).
 - Custom archive name with automatic extension
 - Creates archive in the same folder as the source files
 
+Languages: French 🇫🇷 · English 🇬🇧 · German 🇩🇪
+
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar` `rar`
 
 ---
