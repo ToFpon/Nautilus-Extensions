@@ -29,6 +29,7 @@ except ImportError:
 
 SZ_BIN    = shutil.which("7z")    or "/usr/bin/7z"
 UNRAR_BIN = shutil.which("unrar") or "/usr/bin/unrar"
+RAR_BIN   = shutil.which("rar")   or "/usr/bin/rar"
 
 ARCHIVE_EXTS = {".zip", ".7z", ".tar", ".gz", ".bz2", ".xz",
                 ".rar", ".tgz", ".tbz2", ".cab", ".iso"}
@@ -40,6 +41,23 @@ if _lang.startswith("fr"):
         "title":        "Navigateur d'archives",
         "filter":       "Filtrer…",
         "extract_all":  "Tout extraire",
+        "pwd_title":    "Archive protégée",
+        "create_label":  "Créer une archive",
+        "create_title":  "Créer une archive",
+        "create_name":   "Nom de l'archive",
+        "create_format": "Format",
+        "create_level":  "Compression",
+        "create_pwd":    "Mot de passe (optionnel)",
+        "create_split":  "Diviser en volumes (Mo, 0=non)",
+        "create_btn":    "Créer",
+        "creating":      "Création en cours…",
+        "create_done":   "Archive créée",
+        "create_err":    "Erreur de création",
+        "pwd_body":     "Cette archive est chiffrée. Entrez le mot de passe :",
+        "pwd_placeholder": "Mot de passe",
+        "pwd_cancel":   "Annuler",
+        "pwd_ok":       "Ouvrir",
+        "pwd_wrong":    "Mot de passe incorrect",
         "extract_sel":  "Extraire la sélection",
         "go_up":        "Dossier parent",
         "refresh":      "Actualiser",
@@ -59,6 +77,23 @@ elif _lang.startswith("en"):
         "title":        "Archive Browser",
         "filter":       "Filter…",
         "extract_all":  "Extract all",
+        "pwd_title":    "Protected archive",
+        "create_label":  "Create archive",
+        "create_title":  "Create archive",
+        "create_name":   "Archive name",
+        "create_format": "Format",
+        "create_level":  "Compression",
+        "create_pwd":    "Password (optional)",
+        "create_split":  "Split into volumes (MB, 0=no)",
+        "create_btn":    "Create",
+        "creating":      "Creating…",
+        "create_done":   "Archive created",
+        "create_err":    "Creation error",
+        "pwd_body":     "This archive is encrypted. Enter the password:",
+        "pwd_placeholder": "Password",
+        "pwd_cancel":   "Cancel",
+        "pwd_ok":       "Open",
+        "pwd_wrong":    "Wrong password",
         "extract_sel":  "Extract selection",
         "go_up":        "Parent folder",
         "refresh":      "Refresh",
@@ -97,6 +132,23 @@ else:
         "title":        "Archive Browser",
         "filter":       "Filter…",
         "extract_all":  "Extract all",
+        "pwd_title":    "Protected archive",
+        "create_label":  "Create archive",
+        "create_title":  "Create archive",
+        "create_name":   "Archive name",
+        "create_format": "Format",
+        "create_level":  "Compression",
+        "create_pwd":    "Password (optional)",
+        "create_split":  "Split into volumes (MB, 0=no)",
+        "create_btn":    "Create",
+        "creating":      "Creating…",
+        "create_done":   "Archive created",
+        "create_err":    "Creation error",
+        "pwd_body":     "This archive is encrypted. Enter the password:",
+        "pwd_placeholder": "Password",
+        "pwd_cancel":   "Cancel",
+        "pwd_ok":       "Open",
+        "pwd_wrong":    "Wrong password",
         "extract_sel":  "Extract selection",
         "go_up":        "Parent folder",
         "refresh":      "Refresh",
@@ -120,13 +172,32 @@ def _is_rar(path):
     return ext in (".rar", ".r00", ".r01") or \
            bool(re.search(r"\.part\d+\.rar$", path, re.I))
 
-def _list_archive(path):
+def _is_encrypted(path):
+    """Détecte si l'archive est protégée par mot de passe."""
+    try:
+        if _is_rar(path):
+            r = subprocess.run([UNRAR_BIN, "v", path],
+                               capture_output=True, text=True, timeout=5)
+            out = r.stdout + r.stderr
+            return "password" in out.lower() or "encrypted" in out.lower()
+        else:
+            r = subprocess.run([SZ_BIN, "l", "-p", path],
+                               capture_output=True, text=True, timeout=5)
+            out = r.stdout + r.stderr
+            return ("encrypted" in out.lower() or
+                    "wrong password" in out.lower() or
+                    "cannot open encrypted" in out.lower())
+    except Exception:
+        return False
+
+
+def _list_archive(path, password=""):
     """Retourne une liste de (name, size, is_dir) via libarchive ou fallback."""
     entries = []
-    if HAS_LIBARCHIVE:
+    if HAS_LIBARCHIVE and not password:
+        # libarchive ne supporte pas les archives chiffrées facilement
+        # on l'utilise seulement sans mot de passe
         try:
-            # Lancer dans un subprocess pour éviter les conflits de signaux
-            # avec GTK/GLib dans le thread principal
             script = """
 import sys, libarchive
 entries = []
@@ -151,13 +222,15 @@ with libarchive.file_reader(sys.argv[1]) as a:
             if entries:
                 return entries
         except Exception:
-            pass  # fallback ci-dessous
+            pass
 
-    # Fallback 7z/unrar
+    # Fallback 7z/unrar (supporte les mots de passe)
     if _is_rar(path):
         try:
-            r = subprocess.run([UNRAR_BIN, "v", path],
-                               capture_output=True, text=True, timeout=10)
+            cmd = [UNRAR_BIN, "v"]
+            cmd += ["-p" + password] if password else ["-p-"]
+            cmd += [path]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             in_list = False
             for line in r.stdout.splitlines():
                 if line.strip().startswith("---"):
@@ -178,8 +251,11 @@ with libarchive.file_reader(sys.argv[1]) as a:
             pass
     else:
         try:
-            r = subprocess.run([SZ_BIN, "l", path],
-                               capture_output=True, text=True, timeout=10)
+            cmd = [SZ_BIN, "l"]
+            if password:
+                cmd.append("-p" + password)
+            cmd.append(path)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             in_list = False
             for line in r.stdout.splitlines():
                 if re.match(r"^-{10,}", line.strip()):
@@ -198,12 +274,12 @@ with libarchive.file_reader(sys.argv[1]) as a:
             pass
     return entries
 
-def _extract(archive, names, dst, progress_cb=None):
+def _extract(archive, names, dst, progress_cb=None, password=""):
     """Extraction via 7z/unrar avec progression optionnelle."""
     os.makedirs(dst, exist_ok=True)
     if _is_rar(archive):
-        # unrar affiche "xx%" sur chaque ligne
-        cmd = [UNRAR_BIN, "x", "-y", "-p-", archive] + names + [dst + "/"]
+        pwd_arg = "-p" + password if password else "-p-"
+        cmd = [UNRAR_BIN, "x", "-y", pwd_arg, archive] + names + [dst + "/"]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True)
         for line in proc.stdout:
@@ -216,8 +292,9 @@ def _extract(archive, names, dst, progress_cb=None):
         proc.wait()
     else:
         # 7z avec -bsp1 affiche "xx%" sur stdout
+        pwd_args = ["-p" + password] if password else []
         cmd = [SZ_BIN, "x", archive, f"-o{dst}", "-y",
-               "-bsp1", "-bso0"] + names
+               "-bsp1", "-bso0"] + pwd_args + names
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         BS = bytes([8])  # backspace — séparateur 7z
@@ -544,6 +621,7 @@ class ArchiveBrowserWindow(Adw.Window):
         self.set_default_size(1000, 650)
         self.set_resizable(True)
         self._archive       = archive_path
+        self._password      = ""
         self._cache_dir     = None
         self._cache_files   = {}
         self._prefetch_lock = threading.Lock()
@@ -674,8 +752,45 @@ class ArchiveBrowserWindow(Adw.Window):
         threading.Thread(target=self._do_load, daemon=True).start()
 
     def _do_load(self):
-        entries = _list_archive(self._archive)
+        entries = _list_archive(self._archive, self._password)
+        if not entries and not self._password:
+            # Vérifier si l'archive est chiffrée
+            if _is_encrypted(self._archive):
+                GLib.idle_add(self._ask_password)
+                return
         GLib.idle_add(self._apply, entries)
+
+    def _ask_password(self):
+        """Dialog mot de passe Adw."""
+        import gi
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw
+        dlg = Adw.MessageDialog(
+            transient_for=self,
+            heading=T["pwd_title"],
+            body=T["pwd_body"])
+        entry = Gtk.Entry()
+        entry.set_visibility(False)
+        entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        entry.set_placeholder_text(T["pwd_placeholder"])
+        entry.set_margin_top(8)
+        entry.connect("activate", lambda e: dlg.response("ok"))
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", T["pwd_cancel"])
+        dlg.add_response("ok",     T["pwd_ok"])
+        dlg.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("ok")
+        dlg.connect("response", lambda d, r: self._on_password_response(
+            d, r, entry.get_text()))
+        dlg.present()
+        return False
+
+    def _on_password_response(self, dlg, response, password):
+        dlg.close()
+        if response == "ok" and password:
+            self._password = password
+            self._load()
+        return False
 
     def _apply(self, entries):
         # Construire l'arbre depuis la liste plate
@@ -845,7 +960,7 @@ class ArchiveBrowserWindow(Adw.Window):
             if not self._cache_dir or not os.path.isdir(self._cache_dir):
                 self._cache_dir = tempfile.mkdtemp(prefix="ab_cache_")
         # Extraire (hors lock pour ne pas bloquer)
-        _extract(self._archive, [name], self._cache_dir)
+        _extract(self._archive, [name], self._cache_dir, password=self._password)
         # Chercher le fichier extrait
         base = os.path.basename(name)
         for root, dirs, files in os.walk(self._cache_dir):
@@ -913,7 +1028,7 @@ class ArchiveBrowserWindow(Adw.Window):
             return
         tmp = tempfile.mkdtemp(prefix="ab_open_")
         def _work():
-            _extract(self._archive, [e.name], tmp)
+            _extract(self._archive, [e.name], tmp, password=self._password)
             # Chercher le fichier extrait
             for root, dirs, files in os.walk(tmp):
                 for f in files:
@@ -1015,7 +1130,7 @@ class ArchiveBrowserWindow(Adw.Window):
                 finally:
                     shutil.rmtree(tmp, ignore_errors=True)
             else:
-                _extract(self._archive, names, dst, progress_cb=_on_progress)
+                _extract(self._archive, names, dst, password=self._password, progress_cb=_on_progress)
             GLib.idle_add(self._extract_done, dst)
         threading.Thread(target=_work, daemon=True).start()
 
@@ -1084,6 +1199,205 @@ class ArchiveBrowserWindow(Adw.Window):
 # Nautilus extension
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Archive Creator Window
+# ---------------------------------------------------------------------------
+
+class ArchiveCreatorWindow(Adw.Window):
+    __gtype_name__ = "ArchiveCreatorWindow"
+
+    FORMATS = ["rar", "zip", "7z", "tar.gz", "tar.bz2", "tar.xz"]
+    LEVELS  = ["0 - Store", "1 - Fastest", "3 - Fast", "5 - Normal",
+                "7 - Maximum", "9 - Ultra"]
+
+    def __init__(self, source_paths):
+        super().__init__()
+        self._sources = source_paths
+        self._dest_dir = os.path.dirname(source_paths[0])
+
+        # Nom par défaut = premier élément
+        default_name = os.path.basename(source_paths[0])
+        if len(source_paths) > 1:
+            default_name = os.path.basename(self._dest_dir)
+
+        app = Gtk.Application.get_default()
+        parent = app.get_active_window() if app else None
+        self.set_transient_for(parent)
+        self.set_default_size(440, -1)
+        self.set_resizable(False)
+        self.set_title(T["create_title"])
+
+        tv = Adw.ToolbarView()
+        hdr = Adw.HeaderBar()
+        hdr.set_decoration_layout(":close")
+        hdr.set_title_widget(Gtk.Label(label=T["create_title"]))
+        tv.add_top_bar(hdr)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_start(18); box.set_margin_end(18)
+        box.set_margin_top(12);   box.set_margin_bottom(18)
+
+        # Nom
+        box.append(Gtk.Label(label=T["create_name"], halign=Gtk.Align.START))
+        self._name_entry = Gtk.Entry()
+        self._name_entry.set_text(default_name)
+        box.append(self._name_entry)
+
+        # Format
+        box.append(Gtk.Label(label=T["create_format"], halign=Gtk.Align.START))
+        self._fmt_combo = Gtk.DropDown.new_from_strings(self.FORMATS)
+        self._fmt_combo.set_selected(0)  # RAR par défaut
+        self._fmt_combo.connect("notify::selected", self._on_format_changed)
+        box.append(self._fmt_combo)
+
+        # Niveau de compression
+        box.append(Gtk.Label(label=T["create_level"], halign=Gtk.Align.START))
+        self._lvl_combo = Gtk.DropDown.new_from_strings(self.LEVELS)
+        self._lvl_combo.set_selected(3)  # Normal
+        box.append(self._lvl_combo)
+
+        # Mot de passe
+        box.append(Gtk.Label(label=T["create_pwd"], halign=Gtk.Align.START))
+        self._pwd_entry = Gtk.Entry()
+        self._pwd_entry.set_visibility(False)
+        self._pwd_entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        box.append(self._pwd_entry)
+
+        # Split volumes (RAR/7z seulement)
+        self._split_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self._split_box.append(
+            Gtk.Label(label=T["create_split"], halign=Gtk.Align.START))
+        self._split_entry = Gtk.Entry()
+        self._split_entry.set_text("0")
+        self._split_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self._split_box.append(self._split_entry)
+        box.append(self._split_box)
+
+        box.append(Gtk.Separator())
+
+        # Bouton créer
+        self._create_btn = Gtk.Button(label=T["create_btn"])
+        self._create_btn.add_css_class("suggested-action")
+        self._create_btn.connect("clicked", self._on_create)
+        box.append(self._create_btn)
+
+        # Progress
+        self._prog = Gtk.ProgressBar()
+        self._prog.set_visible(False)
+        box.append(self._prog)
+
+        tv.set_content(box)
+        self.set_content(tv)
+
+        # Escape
+        sc = Gtk.ShortcutController()
+        sc.set_scope(Gtk.ShortcutScope.MANAGED)
+        sc.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("Escape"),
+            Gtk.CallbackAction.new(lambda *_: self.close() or True)))
+        self.add_controller(sc)
+
+    def _on_format_changed(self, combo, _):
+        fmt = self.FORMATS[combo.get_selected()]
+        # Split uniquement pour rar et 7z
+        self._split_box.set_visible(fmt in ("rar", "7z"))
+
+    def _on_create(self, _):
+        name    = self._name_entry.get_text().strip()
+        fmt     = self.FORMATS[self._fmt_combo.get_selected()]
+        level   = self._lvl_combo.get_selected()  # 0-5 → 0,1,3,5,7,9
+        pwd     = self._pwd_entry.get_text().strip()
+        split   = self._split_entry.get_text().strip()
+
+        if not name:
+            return
+
+        # Ajouter l'extension si manquante
+        ext = "." + fmt if not fmt.startswith("tar") else "." + fmt
+        if not name.endswith(ext):
+            name += ext
+
+        out_path = os.path.join(self._dest_dir, name)
+
+        # Niveaux : index 0-5 → valeurs réelles
+        lvl_map = [0, 1, 3, 5, 7, 9]
+        lvl_val = lvl_map[min(level, 5)]
+
+        self._create_btn.set_sensitive(False)
+        self._prog.set_visible(True)
+        self._prog.pulse()
+
+        def _pulse():
+            if self._prog.get_visible():
+                self._prog.pulse()
+                return True
+            return False
+        GLib.timeout_add(80, _pulse)
+
+        def _work():
+            try:
+                self._run_create(out_path, fmt, lvl_val, pwd, split)
+                GLib.idle_add(self._on_done, out_path, None)
+            except Exception as e:
+                GLib.idle_add(self._on_done, out_path, str(e))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _run_create(self, out_path, fmt, level, pwd, split):
+        """Lance la commande de création d'archive."""
+        srcs = self._sources
+
+        if fmt == "rar":
+            cmd = [RAR_BIN, "a", f"-m{level}"]
+            if pwd:   cmd.append(f"-hp{pwd}")
+            if split and split != "0":
+                cmd.append(f"-v{split}m")
+            cmd += [out_path] + srcs
+
+        elif fmt == "7z":
+            cmd = [SZ_BIN, "a", f"-mx={level}"]
+            if pwd:   cmd += [f"-p{pwd}", "-mhe=on"]
+            if split and split != "0":
+                cmd.append(f"-v{split}m")
+            cmd += [out_path] + srcs
+
+        elif fmt == "zip":
+            cmd = [SZ_BIN, "a", "-tzip", f"-mx={level}"]
+            if pwd:   cmd.append(f"-p{pwd}")
+            cmd += [out_path] + srcs
+
+        elif fmt.startswith("tar"):
+            # tar.gz / tar.bz2 / tar.xz
+            compress_map = {"tar.gz": "z", "tar.bz2": "j", "tar.xz": "J"}
+            flag = compress_map.get(fmt, "z")
+            cmd = ["tar", f"-c{flag}f", out_path] + srcs
+
+        else:
+            raise ValueError(f"Format inconnu: {fmt}")
+
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.decode(errors="replace"))
+
+    def _on_done(self, out_path, error):
+        self._prog.set_visible(False)
+        self._create_btn.set_sensitive(True)
+        if error:
+            dlg = Adw.MessageDialog(transient_for=self,
+                heading=T["create_err"], body=error)
+            dlg.add_response("ok", "OK")
+            dlg.present()
+        else:
+            # Ouvrir le dossier de destination dans Nautilus
+            try:
+                Gio.AppInfo.launch_default_for_uri(
+                    Gio.File.new_for_path(self._dest_dir).get_uri(), None)
+            except Exception:
+                pass
+            self.close()
+        return False
+
+
 class ArchiveBrowserExtension(GObject.GObject, Nautilus.MenuProvider):
     __gtype_name__ = "ArchiveBrowserExtension"
 
@@ -1116,24 +1430,53 @@ class ArchiveBrowserExtension(GObject.GObject, Nautilus.MenuProvider):
             ArchiveBrowserWindow(self._last_path).present()
 
     def get_file_items(self, files):
-        archives = [f for f in files
-                    if f.get_uri_scheme() == "file"
-                    and not f.is_directory()
+        if not files:
+            return []
+
+        local = [f for f in files if f.get_uri_scheme() == "file"]
+        if not local:
+            return []
+
+        archives = [f for f in local
+                    if not f.is_directory()
                     and any(f.get_name().lower().endswith(ext)
                             for ext in ARCHIVE_EXTS)]
-        if not archives:
-            return []
-        self._last_path = archives[0].get_location().get_path()
-        item = Nautilus.MenuItem(
-            name="ArchiveBrowser::Open",
-            label=T["menu_label"],
-            tip="Browse archive contents",
-            icon="package-x-generic",
-        )
-        item.connect("activate", lambda *_:
-            ArchiveBrowserWindow(
-                archives[0].get_location().get_path()).present())
-        return [item]
+
+        # Cas 1 : une seule archive → Parcourir
+        if len(archives) == 1 and len(local) == 1:
+            self._last_path = archives[0].get_location().get_path()
+            item = Nautilus.MenuItem(
+                name="ArchiveBrowser::Open",
+                label=T["menu_label"],
+                tip="Browse archive contents",
+                icon="package-x-generic",
+            )
+            item.connect("activate", lambda *_:
+                ArchiveBrowserWindow(
+                    archives[0].get_location().get_path()).present())
+            return [item]
+
+        # Cas 2 : fichiers/dossiers lambda → Créer une archive
+        non_archives = [f for f in local
+                        if f.is_directory() or
+                        not any(f.get_name().lower().endswith(ext)
+                                for ext in ARCHIVE_EXTS)]
+        if non_archives or (local and not archives):
+            paths = [f.get_location().get_path() for f in local
+                     if f.get_location().get_path()]
+            if not paths:
+                return []
+            item = Nautilus.MenuItem(
+                name="ArchiveBrowser::Create",
+                label=T["create_label"],
+                tip="Create an archive from selected files",
+                icon="package-x-generic",
+            )
+            item.connect("activate", lambda *_:
+                ArchiveCreatorWindow(paths).present())
+            return [item]
+
+        return []
 
     def get_background_items(self, folder):
         return []

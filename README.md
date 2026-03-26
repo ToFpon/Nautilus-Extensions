@@ -26,7 +26,7 @@
 | 📦 Extract Here | `extract-here.py` | Fast extraction (7z + unrar) with multi-volume & password support |
 | 🔍 Preview Panel | `preview-panel.py` | Dynamic file preview panel anchored to Nautilus |
 | ⚙️ Extensions Manager | `extensions-manager.py` | Enable/disable extensions on the fly from Nautilus |
-| 🗜️ Archive Browser | `archive-browser.py` | Browse, explore and extract archives with DnD support |
+| 🗜️ Archive Browser | `archive-browser.py` | Browse, extract and **create** archives (zip, 7z, rar, tar…) |
 
 ---
 
@@ -47,6 +47,7 @@ sudo apt install \
   p7zip-full \
   unrar \
   python3-libarchive-c \
+  rar \
   ffmpegthumbnailer \
   poppler-utils \
   libreoffice \
@@ -348,7 +349,7 @@ Each loaded extension consumes memory and CPU. Extensions with background timers
 | `watermark-pdf.py` | ✅ Minimal | Keep active |
 | `dual-panel.py` | ⚠️ Background timer | Enable on demand |
 | `preview-panel.py` | ⚠️ Background timer | Enable on demand |
-| `archive-browser.py` | ✅ Minimal | Keep active |
+| `archive-browser.py` | ✅ Minimal | Keep active — browse + create archives |
 
 **Disabled extensions** are stored in `~/.local/share/nautilus-python/extensions/disabled/` and can be re-enabled at any time.
 
@@ -359,35 +360,45 @@ Each loaded extension consumes memory and CPU. Extensions with background timers
 
 ### 🗜️ Archive Browser — `archive-browser.py`
 
-A file-roller replacement built as a Nautilus extension — browse, explore and extract archive contents without leaving your file manager.
+A complete **file-roller replacement** built as a Nautilus extension — browse, explore, extract and **create** archives without leaving your file manager.
 
 **Triggers:**
-- Right-click on an archive → **Browse archive** (or **Parcourir l'archive**)
+- Right-click on an **archive** → **Browse archive** (or **Parcourir l'archive**)
+- Right-click on **files/folders** → **Create archive** (or **Créer une archive**)
 - `F7` — reopen the last browsed archive
 
 **Supported formats:**
-All formats supported by `libarchive` — zip, 7z, tar, gz, bz2, xz, rar, cab, iso, deb, rpm and more. Extraction via `7z` and `unrar` (full RAR5 support).
+All formats supported by `libarchive` — zip, 7z, tar, gz, bz2, xz, rar, cab, iso, deb, rpm and more.
+Extraction via `7z` and `unrar` (full RAR5 support).
 
 **Layout:**
 - **Left panel** — archive contents with folder tree
 - **Right panel** — filesystem navigator, opens in the archive's directory
 
-**Features:**
+**Browse features:**
 - 📂 **Folder tree** with collapse/expand — subfolders collapsed by default, click to expand
 - 🔍 **Live filter** — search files by name instantly
 - 🖱️ **Drag & Drop** — drag files from the archive directly into any folder in the right panel or in Nautilus
 - 📦 **Extract all** — extracts everything (with full folder structure) to the right panel's current folder
-- ✅ **Extract selection** — extracts selected files **flat** (no folder structure) directly to destination
+- ✅ **Extract selection** — extracts selected files flat (no folder structure) / folders with structure
 - 🖱️ **Double-click** on a file — extracts and opens with the default application
 - 📁 **Editable address bar** — type any path manually and press Enter to navigate
 - ⭐ **XDG bookmarks button** — quick access to Home, Documents, Downloads, Pictures, Music, Videos and GTK bookmarks
+- 🔐 **Password support** — automatic detection of encrypted archives, password dialog on open
 - 🗃️ **Intelligent DnD cache** — extracted files are cached, repeated drags are instantaneous
 - 📊 **Real progress bar** — actual percentage during extraction (0→100%)
 
+**Create archive features:**
+- 📁 **RAR** — compression 0→9, password (header encryption), split into volumes
+- 📦 **7z** — compression 0→9, password (header encryption), split into volumes
+- 🗜️ **ZIP** — compression 0→9, password
+- 🗂️ **tar.gz / tar.bz2 / tar.xz** — standard Unix compression
+- Custom archive name with automatic extension
+- Creates archive in the same folder as the source files
+
 **Dependencies:**
 
-`python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar`
-
+`python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar` `rar`
 ---
 
 ## 🌍 Internationalization
