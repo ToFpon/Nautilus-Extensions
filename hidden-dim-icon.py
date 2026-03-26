@@ -1,55 +1,113 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# NAME: Hidden Files Dimmer (icon only)
+# DESC: Dims icons of hidden files (dot-prefixed) in Nautilus
+# INSTALL:
+#   cp hidden-dim-icon.py ~/.local/share/nautilus-python/extensions/
+#   nautilus -q
+
 import gi
-gi.require_version('Nautilus', '4.0')
-gi.require_version('Gtk', '4.0')
+gi.require_version("Nautilus", "4.0")
+gi.require_version("Gtk",     "4.0")
 from gi.repository import Nautilus, GObject, Gtk, GLib
 
-def find_label_text(widget):
-    if isinstance(widget, Gtk.Label):
-        return widget.get_text()
-    child = widget.get_first_child()
-    while child:
-        result = find_label_text(child)
-        if result:
-            return result
-        child = child.get_next_sibling()
-    return None
+# Opacité appliquée aux icônes des fichiers cachés
+DIM_OPACITY  = 0.35
+# Intervalle du timer en ms — assez long pour ne pas peser sur le CPU
+TICK_MS      = 800
+# Attribut marqueur pour éviter de retraiter un widget déjà traité
+_MARKER      = "_hdim_done"
 
-def find_picture(widget):
+
+# ---------------------------------------------------------------------------
+# Helpers — parcours ciblé de l'arbre GTK
+# ---------------------------------------------------------------------------
+
+def _first_picture(widget):
+    """Retourne le premier Gtk.Picture trouvé sous widget, ou None."""
     if isinstance(widget, Gtk.Picture):
         return widget
     child = widget.get_first_child()
     while child:
-        result = find_picture(child)
-        if result:
-            return result
+        r = _first_picture(child)
+        if r:
+            return r
         child = child.get_next_sibling()
     return None
 
-def walk_and_dim(widget):
+
+def _first_label_text(widget):
+    """Retourne le texte du premier Gtk.Label trouvé, ou None."""
+    if isinstance(widget, Gtk.Label):
+        return widget.get_text()
+    child = widget.get_first_child()
+    while child:
+        r = _first_label_text(child)
+        if r:
+            return r
+        child = child.get_next_sibling()
+    return None
+
+
+def _process_cell(cell):
+    """Applique ou retire le dim sur une NautilusNameCell/NautilusGridCell.
+    Retourne True si le widget était déjà traité (court-circuit possible)."""
+    # On relit le label à chaque fois — la cellule est recyclée par GTK
+    text = _first_label_text(cell)
+    if text is None:
+        return
+
+    is_hidden = text.startswith(".") and len(text) > 1
+    pic       = _first_picture(cell)
+    if pic is None:
+        return
+
+    # Appliquer seulement si l'opacité doit changer — évite les redraws inutiles
+    current = pic.get_opacity()
+    target  = DIM_OPACITY if is_hidden else 1.0
+    if abs(current - target) > 0.01:
+        pic.set_opacity(target)
+
+
+def _walk(widget):
+    """Parcourt l'arbre en s'arrêtant dès qu'on trouve une cellule Nautilus."""
     name = type(widget).__name__
 
-    if name in ('NautilusNameCell', 'NautilusGridCell'):
-        label_text = find_label_text(widget)
-        if label_text and label_text.startswith('.') and len(label_text) > 1:
-            picture = find_picture(widget)
-            if picture:
-                picture.set_opacity(0.35)
-        return
+    if name in ("NautilusNameCell", "NautilusGridCell"):
+        _process_cell(widget)
+        return          # pas besoin de descendre plus bas
 
     child = widget.get_first_child()
     while child:
-        walk_and_dim(child)
+        _walk(child)
         child = child.get_next_sibling()
 
+
+# ---------------------------------------------------------------------------
+# Extension
+# ---------------------------------------------------------------------------
+
 class HiddenFileDimmer(GObject.GObject, Nautilus.MenuProvider):
+    __gtype_name__ = "HiddenFileDimmer"
+
     def __init__(self):
-        GLib.timeout_add(500, self._tick)
+        super().__init__()
+        self._app = Gtk.Application.get_default()
+        GLib.timeout_add(TICK_MS, self._tick)
 
     def _tick(self):
-        for window in Gtk.Window.list_toplevels():
-            if 'Nautilus' in type(window).__name__:
-                walk_and_dim(window)
-        return True
+        # Utiliser get_windows() si dispo (plus ciblé que list_toplevels)
+        if self._app is not None:
+            windows = self._app.get_windows()
+        else:
+            # Fallback : filtrer les toplevel Nautilus
+            windows = [w for w in Gtk.Window.list_toplevels()
+                       if "Nautilus" in type(w).__name__]
+
+        for win in windows:
+            _walk(win)
+        return True     # continuer le timer
 
     def get_file_items(self, files):
         return []
