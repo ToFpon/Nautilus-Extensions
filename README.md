@@ -267,9 +267,7 @@ Fast archive extraction directly from Nautilus via right-click.
 - All other formats extracted via `7z`
 - Extraction destination in same folder as archive
 
-**Dependencies:**
-
-`python3-nautilus` `p7zip-full` `unrar`
+**Dependencies:** `python3-nautilus` `p7zip-full` `unrar`
 
 ---
 
@@ -315,10 +313,7 @@ sudo apt-mark hold libgtk-4-1 libgtk-4-common gir1.2-gtk-4.0 libgtk-4-bin libgtk
 ```
 Similarly, `libexiv2-27 0.27.6-1ubuntu0.1` contains a memory corruption bug — hold `libexiv2-27` if you experience segfaults.
 
-**Dependencies:**
-
-`python3-nautilus` `python3-gi` `gir1.2-adw-1`
-`ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
 
 ---
 
@@ -396,9 +391,8 @@ Extraction via `7z` and `unrar` (full RAR5 support).
 - Custom archive name with automatic extension
 - Creates archive in the same folder as the source files
 
-**Dependencies:**
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar` `rar`
 
-`python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar` `rar`
 ---
 
 ## 🌍 Internationalization
