@@ -818,8 +818,24 @@ class FilePanel(Gtk.Box):
                 return
         self.refresh()
 
+    def _get_target_dir(self):
+        """Retourne le dossier cible pour les actions contextuelles.
+        Si un seul dossier est sélectionné → ce dossier.
+        Sinon → dossier courant du panel."""
+        selected = self.get_selected_entries()
+        if len(selected) == 1 and selected[0].is_dir:
+            return selected[0].path
+        return self._path
+
     def _on_new_folder(self, _btn):
-        self._ask_name(T["new_folder_name"], lambda name: self._exec_mkdir(name))
+        target = self._get_target_dir()
+        def _do(name):
+            try:
+                os.makedirs(os.path.join(target, name), exist_ok=True)
+                self.navigate(target)
+            except Exception as ex:
+                self._error(str(ex))
+        self._ask_name(T["new_folder_name"], _do)
 
     def _exec_mkdir(self, name):
         try:
@@ -829,7 +845,14 @@ class FilePanel(Gtk.Box):
             self._error(str(ex))
 
     def _on_new_file(self, _btn):
-        self._ask_name(T["new_file_name"], lambda name: self._exec_touch(name))
+        target = self._get_target_dir()
+        def _do(name):
+            try:
+                open(os.path.join(target, name), "a").close()
+                self.navigate(target)
+            except Exception as ex:
+                self._error(str(ex))
+        self._ask_name(T["new_file_name"], _do)
 
     def _exec_touch(self, name):
         try:
@@ -854,9 +877,10 @@ class FilePanel(Gtk.Box):
             self._error(str(ex))
 
     def _open_terminal(self, _btn):
+        target = self._get_target_dir()
         for term in ["gnome-terminal", "xterm", "konsole", "xfce4-terminal"]:
             if shutil.which(term):
-                subprocess.Popen([term], cwd=self._path)
+                subprocess.Popen([term], cwd=target)
                 return
 
     # -- Menu contextuel clic droit -----------------------------------------
