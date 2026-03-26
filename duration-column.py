@@ -1,122 +1,180 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# NAME: Duration Column — Nautilus Python Extension
+# DESC: Adds a Duration column for audio/video files in Nautilus list view
+# REQUIRES: python3-nautilus, ffmpeg
+# INSTALL:
+#   cp duration-column.py ~/.local/share/nautilus-python/extensions/
+#   nautilus -q
+
 import os
+import json
 import subprocess
 import time
-import json
 from pathlib import Path
 from urllib.parse import unquote
+
+import gi
+gi.require_version("Nautilus", "4.0")
 from gi.repository import GObject, Nautilus
 
-# ===== CONFIGURATION =====
-SUPPORTED_EXTENSIONS = {
-    '.mp4', '.mkv', '.avi', '.mov', '.webm', '.mp3', '.flac', '.wav', '.ogg', '.m4a', '.m4v', '.wmv', '.opus'
-}
-CACHE_FILE = Path.home() / ".cache" / "nautilus-media-durations.json"
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+SUPPORTED_EXTENSIONS = frozenset({
+    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv",
+    ".mp3", ".flac", ".wav", ".ogg", ".m4a", ".opus", ".aac", ".wma",
+})
+
+CACHE_FILE        = Path.home() / ".cache" / "nautilus-media-durations.json"
 CACHE_EXPIRE_DAYS = 30
-# =========================
+CACHE_SAVE_EVERY  = 5
 
-def format_duration(seconds_str):
-    try:
-        seconds = float(seconds_str)
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        seconds = int(seconds % 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    except:
-        return seconds_str
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-def get_raw_duration(file_path):
+def _fmt(seconds_str: str) -> str:
     try:
-        result = subprocess.run(
-            [
-                'ffprobe', '-v', 'error',
-                '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1',
-                file_path
-            ],
+        s = float(seconds_str)
+        h = int(s // 3600)
+        m = int((s % 3600) // 60)
+        s = int(s % 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    except (ValueError, TypeError):
+        return ""
+
+
+def _probe(file_path: str):
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             file_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=5
+            timeout=5,
         )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
+        if r.returncode == 0:
+            val = r.stdout.strip()
+            float(val)
+            return val
+    except (subprocess.TimeoutExpired, ValueError, OSError):
         pass
     return None
 
-class DiskCache:
-    def __init__(self):
-        self.cache = self._load_cache()
-        self._unsaved_changes = 0
+# ---------------------------------------------------------------------------
+# Cache disque
+# ---------------------------------------------------------------------------
 
-    def _load_cache(self):
+class DiskCache:
+    """Cache JSON avec expiration, sauvegarde atomique et nettoyage auto."""
+
+    def __init__(self):
+        self._data  = self._load()
+        self._dirty = 0
+        self._evict_expired()
+
+    def _load(self) -> dict:
         try:
-            with open(CACHE_FILE, 'r') as f:
+            with open(CACHE_FILE, "r") as f:
                 return json.load(f)
-        except:
+        except (OSError, json.JSONDecodeError):
             return {}
 
-    def _save_cache(self):
-        CACHE_FILE.parent.mkdir(exist_ok=True, parents=True)
-        with open(CACHE_FILE, 'w') as f:
-            json.dump(self.cache, f)
-        self._unsaved_changes = 0
-
-    def get(self, path):
-        data = self.cache.get(path)
-        if data:
-            try:
-                if os.path.getmtime(path) == data.get('mtime', 0):
-                    return data['duration_seconds']  # Retourne toujours les secondes
-            except:
-                pass
-        return None
-
-    def set(self, path, duration_seconds):
+    def _save(self):
+        """Sauvegarde atomique via fichier temporaire."""
         try:
-            mtime = os.path.getmtime(path)
-            self.cache[path] = {'duration_seconds': duration_seconds, 'mtime': mtime}
-            self._unsaved_changes += 1
-            if self._unsaved_changes >= 5:
-                self._save_cache()
-        except:
+            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = CACHE_FILE.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                json.dump(self._data, f, separators=(",", ":"))
+            tmp.replace(CACHE_FILE)
+            self._dirty = 0
+        except OSError:
             pass
 
-    def save_if_needed(self):
-        if self._unsaved_changes > 0:
-            self._save_cache()
+    def _evict_expired(self):
+        """Supprime les entrées non accédées depuis CACHE_EXPIRE_DAYS."""
+        cutoff  = time.time() - CACHE_EXPIRE_DAYS * 86400
+        expired = [k for k, v in self._data.items()
+                   if v.get("accessed", 0) < cutoff]
+        for k in expired:
+            del self._data[k]
+        if expired:
+            self._save()
 
-class DurationColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvider):
-    def __init__(self):
-        super().__init__()
-        self.cache = DiskCache()
+    def get(self, path: str):
+        entry = self._data.get(path)
+        if not entry:
+            return None
+        try:
+            if os.path.getmtime(path) != entry.get("mtime", -1):
+                return None     # fichier modifié → invalider
+            entry["accessed"] = time.time()
+            return entry["duration"]
+        except OSError:
+            return None
 
-    def update_file_info(self, file_info):
-        if file_info.get_uri_scheme() != 'file':
+    def set(self, path: str, duration: str):
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
             return
+        self._data[path] = {
+            "duration": duration,
+            "mtime":    mtime,
+            "accessed": time.time(),
+        }
+        self._dirty += 1
+        if self._dirty >= CACHE_SAVE_EVERY:
+            self._save()
 
-        file_path = unquote(file_info.get_uri()[7:])
-        if not any(file_path.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
-            return
+    def flush(self):
+        if self._dirty:
+            self._save()
 
-        # 1. Vérifie le cache (en secondes)
-        cached_seconds = self.cache.get(file_path)
-        if cached_seconds:
-            file_info.add_string_attribute('duration', format_duration(cached_seconds))
-            return
+# ---------------------------------------------------------------------------
+# Extension Nautilus — synchrone, simple, fiable
+# ---------------------------------------------------------------------------
 
-        # 2. Si pas dans le cache, lance ffprobe
-        raw_seconds = get_raw_duration(file_path)
-        if raw_seconds:
-            self.cache.set(file_path, raw_seconds)
-            file_info.add_string_attribute('duration', format_duration(raw_seconds))
+_cache = DiskCache()
+
+class DurationColumnExtension(
+        GObject.GObject,
+        Nautilus.ColumnProvider,
+        Nautilus.InfoProvider):
+
+    __gtype_name__ = "DurationColumnExtension"
 
     def get_columns(self):
-        return (
-            Nautilus.Column(
-                name='NautilusPython::duration_column',
-                attribute='duration',
-                label='Duration',
-                description='Shows the duration of media files.'
-            ),
-        )
+        return [Nautilus.Column(
+            name        = "NautilusPython::duration_column",
+            attribute   = "duration",
+            label       = "Duration",
+            description = "Duration of audio/video files",
+        )]
+
+    def update_file_info(self, file_info):
+        if file_info.get_uri_scheme() != "file":
+            return
+
+        path = unquote(file_info.get_uri()[7:])
+        if os.path.splitext(path)[1].lower() not in SUPPORTED_EXTENSIONS:
+            return
+
+        # Cache hit — instantané
+        cached = _cache.get(path)
+        if cached:
+            file_info.add_string_attribute("duration", _fmt(cached))
+            return
+
+        # Cache miss — ffprobe synchrone
+        dur = _probe(path)
+        if dur:
+            _cache.set(path, dur)
+            file_info.add_string_attribute("duration", _fmt(dur))
