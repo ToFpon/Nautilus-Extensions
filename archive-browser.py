@@ -1343,35 +1343,52 @@ class ArchiveCreatorWindow(Adw.Window):
         """Lance la commande de création d'archive."""
         srcs = self._sources
 
+        # Utiliser des chemins relatifs pour ne pas polluer l'archive avec
+        # la structure de dossiers absolue (/home/user/…).
+        # Si toutes les sources partagent le même parent (cas standard dans
+        # Nautilus), on lance la commande depuis ce dossier.
+        parents = {os.path.dirname(s) for s in srcs}
+        if len(parents) == 1:
+            cwd      = parents.pop()
+            rel_srcs = [os.path.basename(s) for s in srcs]
+        else:
+            # Sources dans des dossiers différents — on garde les chemins absolus
+            cwd      = None
+            rel_srcs = srcs
+
         if fmt == "rar":
             cmd = [RAR_BIN, "a", f"-m{level}"]
             if pwd:   cmd.append(f"-hp{pwd}")
             if split and split != "0":
                 cmd.append(f"-v{split}m")
-            cmd += [out_path] + srcs
+            cmd += [out_path] + rel_srcs
 
         elif fmt == "7z":
             cmd = [SZ_BIN, "a", f"-mx={level}"]
             if pwd:   cmd += [f"-p{pwd}", "-mhe=on"]
             if split and split != "0":
                 cmd.append(f"-v{split}m")
-            cmd += [out_path] + srcs
+            cmd += [out_path] + rel_srcs
 
         elif fmt == "zip":
             cmd = [SZ_BIN, "a", "-tzip", f"-mx={level}"]
             if pwd:   cmd.append(f"-p{pwd}")
-            cmd += [out_path] + srcs
+            cmd += [out_path] + rel_srcs
 
         elif fmt.startswith("tar"):
-            # tar.gz / tar.bz2 / tar.xz
+            # tar.gz / tar.bz2 / tar.xz — -C pour changer de dossier
             compress_map = {"tar.gz": "z", "tar.bz2": "j", "tar.xz": "J"}
             flag = compress_map.get(fmt, "z")
-            cmd = ["tar", f"-c{flag}f", out_path] + srcs
+            if cwd:
+                cmd = ["tar", f"-c{flag}f", out_path, "-C", cwd] + rel_srcs
+            else:
+                cmd = ["tar", f"-c{flag}f", out_path] + rel_srcs
+            cwd = None  # tar gère lui-même le -C, pas besoin de cwd subprocess
 
         else:
             raise ValueError(f"Format inconnu: {fmt}")
 
-        result = subprocess.run(cmd, capture_output=True)
+        result = subprocess.run(cmd, capture_output=True, cwd=cwd)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.decode(errors="replace"))
 
