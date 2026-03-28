@@ -40,6 +40,8 @@ if _lang.startswith("de"):
         "rename":        "Umbenennen",
         "delete":        "Löschen",
         "refresh":       "Neu Laden",
+        "grid_view":    "Rasteransicht",
+        "list_view":    "Listenansicht",
         "go_up":         "Vorheriger Ordner",
         "col_name":      "Name",
         "col_size":      "Größe",
@@ -91,6 +93,8 @@ elif _lang.startswith("fr"):
         "rename":        "Renommer",
         "delete":        "Supprimer",
         "refresh":       "Actualiser",
+        "grid_view":    "Vue grille",
+        "list_view":    "Vue liste",
         "go_up":         "Dossier parent",
         "col_name":      "Nom",
         "col_size":      "Taille",
@@ -141,6 +145,8 @@ else:
         "rename":        "Rename",
         "delete":        "Delete",
         "refresh":       "Refresh",
+        "grid_view":    "Grid view",
+        "list_view":    "List view",
         "go_up":         "Parent folder",
         "col_name":      "Name",
         "col_size":      "Size",
@@ -288,6 +294,7 @@ class FilePanel(Gtk.Box):
     def __init__(self, start_path: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._path     = start_path
+        self._is_grid  = False
         self._entries  = []
         self._other    = None   # référence à l'autre panneau (setté après)
         self._sort_col = "name"
@@ -321,6 +328,11 @@ class FilePanel(Gtk.Box):
         refresh_btn.set_tooltip_text(T["refresh"])
         refresh_btn.connect("clicked", lambda _: self.refresh())
         addr_bar.append(refresh_btn)
+
+        self._grid_btn = Gtk.ToggleButton(icon_name="view-grid-symbolic")
+        self._grid_btn.set_tooltip_text(T["grid_view"])
+        self._grid_btn.connect("toggled", self._on_grid_toggle)
+        addr_bar.append(self._grid_btn)
 
         term_btn = Gtk.Button(icon_name="utilities-terminal-symbolic")
         term_btn.set_tooltip_text(T["open_terminal"])
@@ -377,25 +389,56 @@ class FilePanel(Gtk.Box):
                   hdr_sep2, self._hdr_date, hdr_sep3, self._hdr_perms]:
             hdr.append(w)
 
-        self.append(hdr)
-        self.append(Gtk.Separator())
+        self._hdr_box = hdr
+        self._hdr_sep = Gtk.Separator()
+        self.append(self._hdr_box)
+        self.append(self._hdr_sep)
 
         # ── ListView ─────────────────────────────────────────────────────────
-        factory = Gtk.SignalListItemFactory()
-        factory.connect("setup",  self._row_setup)
-        factory.connect("bind",   self._row_bind)
-        factory.connect("unbind", self._row_unbind)
+        self._list_factory = Gtk.SignalListItemFactory()
+        self._list_factory.connect("setup",  self._row_setup)
+        self._list_factory.connect("bind",   self._row_bind)
+        self._list_factory.connect("unbind", self._row_unbind)
 
-        self._list_view = Gtk.ListView(model=self._selection, factory=factory)
+        self._list_view = Gtk.ListView(model=self._selection,
+                                       factory=self._list_factory)
         self._list_view.set_single_click_activate(False)
         self._list_view.connect("activate", self._on_activate)
         self._list_view.add_css_class("navigation-sidebar")
 
-        self._scroll = Gtk.ScrolledWindow()
-        self._scroll.set_vexpand(True)
-        self._scroll.set_overlay_scrolling(False)
-        self._scroll.set_child(self._list_view)
-        self.append(self._scroll)
+        # ── GridView ─────────────────────────────────────────────────────────
+        self._grid_factory = Gtk.SignalListItemFactory()
+        self._grid_factory.connect("setup",  self._grid_setup)
+        self._grid_factory.connect("bind",   self._grid_bind)
+        self._grid_factory.connect("unbind", self._grid_unbind)
+
+        self._grid_view = Gtk.GridView(model=self._selection,
+                                       factory=self._grid_factory)
+        self._grid_view.set_single_click_activate(False)
+        self._grid_view.set_max_columns(8)
+        self._grid_view.set_min_columns(2)
+        self._grid_view.connect("activate", self._on_activate)
+        self._grid_view.add_css_class("navigation-sidebar")
+
+        # Stack pour switcher entre list et grid sans re-parenting
+        self._view_stack = Gtk.Stack()
+        self._view_stack.set_vexpand(True)
+        self._view_stack.set_transition_type(Gtk.StackTransitionType.NONE)
+
+        scroll_list = Gtk.ScrolledWindow()
+        scroll_list.set_vexpand(True)
+        scroll_list.set_overlay_scrolling(False)
+        scroll_list.set_child(self._list_view)
+
+        scroll_grid = Gtk.ScrolledWindow()
+        scroll_grid.set_vexpand(True)
+        scroll_grid.set_overlay_scrolling(False)
+        scroll_grid.set_child(self._grid_view)
+
+        self._view_stack.add_named(scroll_list, "list")
+        self._view_stack.add_named(scroll_grid, "grid")
+        self._view_stack.set_visible_child_name("list")
+        self.append(self._view_stack)
 
         # ── Actions bar ───────────────────────────────────────────────────────
         self._build_actions()
@@ -539,6 +582,83 @@ class FilePanel(Gtk.Box):
         row = item.get_child()
         if row:
             row._entry = None
+
+    # -- Grid factory ---------------------------------------------------------
+
+    def _grid_setup(self, factory, item):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        box.set_size_request(90, -1)
+
+        icon = Gtk.Image()
+        icon.set_icon_size(Gtk.IconSize.LARGE)
+        icon.set_pixel_size(48)
+        icon.set_halign(Gtk.Align.CENTER)
+
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.CENTER)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_max_width_chars(10)
+        lbl.set_justify(Gtk.Justification.CENTER)
+        lbl.set_wrap(True)
+        lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        lbl.set_lines(2)
+
+        box.append(icon)
+        box.append(lbl)
+        item.set_child(box)
+
+        gc = Gtk.GestureClick()
+        gc.set_button(3)
+        gc.connect("pressed", self._on_row_right_click)
+        box.add_controller(gc)
+
+    def _grid_bind(self, factory, item):
+        entry = item.get_item()
+        box   = item.get_child()
+        box._entry = entry
+
+        icon = box.get_first_child()
+        lbl  = icon.get_next_sibling()
+
+        icon_name = _icon_for(entry.path, entry.is_dir)
+        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        if theme.has_icon(icon_name):
+            paintable = theme.lookup_icon(
+                icon_name, None, 48, 1,
+                Gtk.TextDirection.NONE,
+                Gtk.IconLookupFlags.FORCE_REGULAR)
+            icon.set_from_paintable(paintable)
+        else:
+            icon.set_from_icon_name(icon_name)
+
+        lbl.set_text(entry.name)
+        if entry.is_dir:
+            lbl.add_css_class("bold")
+        else:
+            lbl.remove_css_class("bold")
+
+    def _grid_unbind(self, factory, item):
+        box = item.get_child()
+        if box:
+            box._entry = None
+
+    def _on_grid_toggle(self, btn):
+        self._is_grid = btn.get_active()
+        if self._is_grid:
+            self._view_stack.set_visible_child_name("grid")
+            self._hdr_box.set_visible(False)
+            self._hdr_sep.set_visible(False)
+            self._grid_btn.set_tooltip_text(T["list_view"])
+        else:
+            self._view_stack.set_visible_child_name("list")
+            self._hdr_box.set_visible(True)
+            self._hdr_sep.set_visible(True)
+            self._grid_btn.set_tooltip_text(T["grid_view"])
 
     # stubs gardés pour compatibilité
     def _factory_name_setup(self, f, i): pass
@@ -993,6 +1113,24 @@ class FilePanel(Gtk.Box):
         self._list_view.add_controller(ctrl)
         self._list_view.set_focusable(True)
 
+        # Même raccourcis sur la vue grille
+        ctrl2 = Gtk.ShortcutController()
+        ctrl2.set_scope(Gtk.ShortcutScope.LOCAL)
+        for trigger_str, cb in [
+            ("Delete",        lambda: self._on_delete(None)),
+            ("<Shift>Delete", lambda: self._on_delete_perm(None)),
+            ("F2",            lambda: self._on_rename(None)),
+            ("<Ctrl>c",       lambda: self._on_copy(None)),
+            ("<Ctrl>x",       lambda: self._on_move(None)),
+            ("<Ctrl>n",       lambda: self._on_new_folder(None)),
+            ("BackSpace",     lambda: self.navigate(os.path.dirname(self._path))),
+        ]:
+            trigger = Gtk.ShortcutTrigger.parse_string(trigger_str)
+            action  = Gtk.CallbackAction.new(lambda *a, c=cb: c() or True)
+            ctrl2.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        self._grid_view.add_controller(ctrl2)
+        self._grid_view.set_focusable(True)
+
     # -- DnD -----------------------------------------------------------------
 
     def _setup_keyboard(self):
@@ -1015,16 +1153,35 @@ class FilePanel(Gtk.Box):
         self._list_view.add_controller(ctrl)
         self._list_view.set_focusable(True)
 
+        # Même raccourcis sur la vue grille
+        ctrl2 = Gtk.ShortcutController()
+        ctrl2.set_scope(Gtk.ShortcutScope.LOCAL)
+        for trigger_str, cb in [
+            ("Delete",        lambda: self._on_delete(None)),
+            ("<Shift>Delete", lambda: self._on_delete_perm(None)),
+            ("F2",            lambda: self._on_rename(None)),
+            ("<Ctrl>c",       lambda: self._on_copy(None)),
+            ("<Ctrl>x",       lambda: self._on_move(None)),
+            ("<Ctrl>n",       lambda: self._on_new_folder(None)),
+            ("BackSpace",     lambda: self.navigate(os.path.dirname(self._path))),
+        ]:
+            trigger = Gtk.ShortcutTrigger.parse_string(trigger_str)
+            action  = Gtk.CallbackAction.new(lambda *a, c=cb: c() or True)
+            ctrl2.add_shortcut(Gtk.Shortcut.new(trigger, action))
+        self._grid_view.add_controller(ctrl2)
+        self._grid_view.set_focusable(True)
+
     def _setup_dnd(self):
-        drag_src = Gtk.DragSource()
-        drag_src.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
-        drag_src.connect("prepare", self._on_drag_prepare)
-        self._list_view.add_controller(drag_src)
+        for view in [self._list_view, self._grid_view]:
+            drag_src = Gtk.DragSource()
+            drag_src.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+            drag_src.connect("prepare", self._on_drag_prepare)
+            view.add_controller(drag_src)
 
         drop_tgt = Gtk.DropTarget.new(GObject.TYPE_STRING,
                                       Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
         drop_tgt.connect("drop", self._on_drop)
-        self._list_view.add_controller(drop_tgt)
+        self._view_stack.add_controller(drop_tgt)
 
     def _on_drag_prepare(self, src, x, y):
         selected = self.get_selected_entries()
@@ -1452,17 +1609,8 @@ class DualPanelKeyHandler(GObject.GObject):
         ctrl.set_scope(Gtk.ShortcutScope.MANAGED)
 
         def on_f3(*_):
-            path = os.path.expanduser("~")
-            app  = Gtk.Application.get_default()
-            if app:
-                win = app.get_active_window()
-                if win:
-                    title = win.get_title() or ""
-                    if " — " in title:
-                        folder_name = title.split(" — ")[0].strip()
-                        candidate = os.path.join(path, folder_name)
-                        if os.path.isdir(candidate):
-                            path = candidate
+            path = (DualPanelKeyHandler._current_path
+                    or os.path.expanduser("~"))
             DualPanelWindow(path).present()
             return True
 
@@ -1497,6 +1645,10 @@ class DualPanelExtension(GObject.GObject, Nautilus.MenuProvider):
         return [item]
 
     def get_background_items(self, folder):
+        if folder:
+            p = folder.get_location().get_path()
+            if p:
+                DualPanelKeyHandler._current_path = p
         item = Nautilus.MenuItem(
             name="DualPanel::OpenBg",
             label=T["menu_label"],
