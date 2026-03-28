@@ -201,34 +201,39 @@ DEBUG=1 nautilus --no-desktop 2>&1 | grep "folder-color"
 
 ### 🗂️ Dual Panel — `dual-panel.py`
 
-A full-featured dual-panel file manager window launched from Nautilus, with a Nautilus-style sidebar for quick navigation.
+A full-featured dual-panel file manager window launched from Nautilus — with sidebar, grid view, smart right-click and context-aware actions.
 
 **Triggers:**
-- `F3` — open from any Nautilus window
+- `F3` — open from any Nautilus window, **starts in the current Nautilus folder**
 - Right-click on a folder → **Open in Dual Panel**
 - Right-click on background → **Open in Dual Panel**
 
 **Layout:**
-- **Left sidebar** — Nautilus-style: Favorites (XDG special folders), Bookmarks (from `~/.config/gtk-3.0/bookmarks`), Mounted volumes (GIO)
+- **Left sidebar** — Nautilus-style: Favorites (XDG), Bookmarks (`~/.config/gtk-3.0/bookmarks`), Mounted volumes (GIO)
 - **Left panel** — source panel
 - **Right panel** — destination panel
 
-**Columns:** Name (expandable) · Size · Modified · Permissions (fixed width)
+**Views (independent per panel):**
+- 📋 **List view** — Name · Size · Modified · Permissions columns with sortable header
+- ⊞ **Grid view** — Large icons (48px) with filename, toggle button in toolbar
 
 **File operations:**
-- Copy → / ← Copy between panels
-- Move → / ← Move between panels
-- Drag & Drop between panels
-- New folder, New file
+- Copy → / ← Copy between panels (with rsync progress bar)
+- Move → / ← Move between panels (with rsync progress bar)
+- Drag & Drop between panels and from/to Nautilus
+- New folder / New file — **created inside selected folder** if one is selected
 - Rename (F2)
 - Delete to trash (Delete), Permanent delete (Shift+Delete)
-- Open in terminal
+- Open terminal — **opens in selected folder** if one is selected
+
+**Right-click context menu:**
+- Direct right-click on any file or folder — **no pre-selection needed**
+- Smart menu: shows file actions only when a file/folder is selected, always shows New folder, New file, Terminal
 
 **Keyboard shortcuts:**
 | Key | Action |
 |---|---|
-| `F3` | Open Dual Panel |
-| `F5` | Refresh both panels |
+| `F3` | Open Dual Panel (current folder) |
 | `F2` | Rename selected |
 | `Delete` | Move to trash |
 | `Shift+Delete` | Delete permanently |
@@ -236,7 +241,6 @@ A full-featured dual-panel file manager window launched from Nautilus, with a Na
 | `Ctrl+X` | Move to other panel |
 | `Ctrl+N` | New folder |
 | `BackSpace` | Go to parent folder |
-| `Alt+←/→` | Navigate left/right panel |
 | `Escape` | Close window |
 
 **Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
