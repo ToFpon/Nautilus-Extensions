@@ -1494,6 +1494,16 @@ class DualPanelWindow(Adw.Window):
         self._left.set_other_panel(self._right)
         self._right.set_other_panel(self._left)
 
+        # Synchroniser la vue avec Nautilus — lire GSettings à l'ouverture
+        try:
+            settings = Gio.Settings.new("org.gnome.nautilus.preferences")
+            is_grid  = settings.get_string("default-folder-viewer") == "icon-view"
+        except Exception:
+            is_grid  = False
+        if is_grid:
+            self._left._grid_btn.set_active(True)
+            self._right._grid_btn.set_active(True)
+
         # Mise à jour des labels copier/déplacer selon quel panneau est actif
         self._left._copy_btn.set_label(T["copy"])
         self._right._copy_btn.set_label(T["copy_left"])
@@ -1649,6 +1659,12 @@ class DualPanelExtension(GObject.GObject, Nautilus.MenuProvider):
             p = folder.get_location().get_path()
             if p:
                 DualPanelKeyHandler._current_path = p
+                try:
+                    settings = Gio.Settings.new("org.gnome.nautilus.preferences")
+                    viewer   = settings.get_string("default-folder-viewer")
+                    DualPanelKeyHandler._current_is_grid = (viewer == "icon-view")
+                except Exception:
+                    DualPanelKeyHandler._current_is_grid = False
         item = Nautilus.MenuItem(
             name="DualPanel::OpenBg",
             label=T["menu_label"],
