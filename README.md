@@ -27,6 +27,7 @@
 | 🔍 Preview Panel | `preview-panel.py` | Dynamic file preview panel anchored to Nautilus |
 | ⚙️ Extensions Manager | `extensions-manager.py` | Enable/disable extensions on the fly from Nautilus |
 | 🗜️ Archive Browser | `archive-browser.py` | Browse, extract and **create** archives (zip, 7z, rar, tar…) |
+| ✂️ Cut Item Dimmer | `cut-dim.py` | Visual dimming of cut (Ctrl+X) files and folders |
 
 ---
 
@@ -267,7 +268,9 @@ Fast archive extraction directly from Nautilus via right-click.
 - All other formats extracted via `7z`
 - Extraction destination in same folder as archive
 
-**Dependencies:** `python3-nautilus` `p7zip-full` `unrar`
+**Dependencies:**
+
+`python3-nautilus` `p7zip-full` `unrar`
 
 ---
 
@@ -313,7 +316,10 @@ sudo apt-mark hold libgtk-4-1 libgtk-4-common gir1.2-gtk-4.0 libgtk-4-bin libgtk
 ```
 Similarly, `libexiv2-27 0.27.6-1ubuntu0.1` contains a memory corruption bug — hold `libexiv2-27` if you experience segfaults.
 
-**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
+**Dependencies:**
+
+`python3-nautilus` `python3-gi` `gir1.2-adw-1`
+`ffmpegthumbnailer` `poppler-utils` `libreoffice` `wmctrl` `xdotool`
 
 ---
 
@@ -345,6 +351,7 @@ Each loaded extension consumes memory and CPU. Extensions with background timers
 | `dual-panel.py` | ⚠️ Background timer | Enable on demand |
 | `preview-panel.py` | ⚠️ Background timer | Enable on demand |
 | `archive-browser.py` | ✅ Minimal | Keep active — browse + create archives |
+| `cut-dim.py` | ⚠️ Background timer | Keep active — very lightweight |
 
 **Disabled extensions** are stored in `~/.local/share/nautilus-python/extensions/disabled/` and can be re-enabled at any time.
 
@@ -391,9 +398,24 @@ Extraction via `7z` and `unrar` (full RAR5 support).
 - Custom archive name with automatic extension
 - Creates archive in the same folder as the source files
 
-Languages: French 🇫🇷 · English 🇬🇧 · German 🇩🇪
+**Dependencies:**
 
-**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar` `rar`
+`python3-nautilus` `python3-gi` `gir1.2-adw-1` `python3-libarchive-c` `p7zip-full` `unrar` `rar`
+---
+
+### ✂️ Cut Item Dimmer — `cut-dim.py`
+
+Provides a clear visual feedback when cutting files or folders with **Ctrl+X** — the entire item (icon + label) is dimmed, just like Windows Explorer, Nemo or Thunar.
+
+By default, Nautilus only slightly reduces the opacity of the icon — barely noticeable. This extension makes the effect obvious and restores full opacity automatically when the clipboard changes.
+
+**How it works:**
+- Scans all Nautilus widgets every 300ms
+- Detects items with the `cut` CSS class on their `GtkPicture` widget
+- Applies `set_opacity(0.3)` on the parent cell (icon + label together)
+- Restores `set_opacity(1.0)` as soon as the item is no longer marked as cut
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0`
 
 ---
 
