@@ -348,9 +348,9 @@ class FilePanel(Gtk.Box):
         refresh_btn.connect("clicked", lambda _: self.refresh())
         addr_bar.append(refresh_btn)
 
-        self._grid_btn = Gtk.ToggleButton(icon_name="view-grid-symbolic")
+        self._grid_btn = Gtk.Button(icon_name="view-grid-symbolic")
         self._grid_btn.set_tooltip_text(T["grid_view"])
-        self._grid_btn.connect("toggled", self._on_grid_toggle)
+        self._grid_btn.connect("clicked", self._on_grid_toggle)
         addr_bar.append(self._grid_btn)
 
         term_btn = Gtk.Button(icon_name="utilities-terminal-symbolic")
@@ -362,9 +362,18 @@ class FilePanel(Gtk.Box):
         self.append(Gtk.Separator())
 
         # ── Store / Sort / Selection ────────────────────────────────────────
-        self._store      = Gio.ListStore(item_type=FileEntry)
-        self._sort_model = Gtk.SortListModel.new(self._store, None)
+        self._store   = Gio.ListStore(item_type=FileEntry)
+        # ColumnView créé ici pour récupérer son sorter natif
+        self._col_view = Gtk.ColumnView()
+        self._col_view.set_show_column_separators(True)
+        self._col_view.set_single_click_activate(False)
+        self._col_view.connect("activate", self._on_activate)
+        # SortListModel branché sur le sorter natif du ColumnView
+        self._sort_model = Gtk.SortListModel.new(
+            self._store, self._col_view.get_sorter())
+        self._sort_model.set_incremental(True)
         self._selection  = Gtk.MultiSelection.new(self._sort_model)
+        self._col_view.set_model(self._selection)
 
         # ── CSS ─────────────────────────────────────────────────────────────
         css = Gtk.CssProvider()
@@ -377,53 +386,46 @@ class FilePanel(Gtk.Box):
             Gdk.Display.get_default(), css,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        # ── Header manuel ────────────────────────────────────────────────────
-        hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        hdr.add_css_class("toolbar")
+        # ── ColumnView — headers natifs + clic droit sur cellule ─────────────
+        # (déjà créé dans __init__ avec le sorter natif)
 
-        def hdr_btn(label, sort_key, expand=False):
-            b = Gtk.Button(label=label)
-            b.add_css_class("flat")
-            b.add_css_class("col-header")
-            b.connect("clicked", self._on_sort_click, sort_key)
-            if expand:
-                b.set_hexpand(True)
-                b.set_halign(Gtk.Align.FILL)
-            else:
-                b.set_halign(Gtk.Align.FILL)
-            return b
+        # Colonne Nom
+        self._factory_name = Gtk.SignalListItemFactory()
+        self._factory_name.connect("setup",  self._setup_name)
+        self._factory_name.connect("bind",   self._bind_name)
+        self._factory_name.connect("unbind", self._unbind_name)
+        col_name = Gtk.ColumnViewColumn(title=T["col_name"],
+                                         factory=self._factory_name)
+        col_name.set_expand(True)
+        col_name.set_resizable(True)
+        col_name.set_sorter(self._make_sorter("name"))
+        self._col_view.append_column(col_name)
 
-        self._hdr_name  = hdr_btn(T["col_name"],  "name",  expand=True)
-        hdr_sep1        = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        self._hdr_size  = hdr_btn(T["col_size"],  "size")
-        self._hdr_size.set_size_request(90, -1)
-        hdr_sep2        = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        self._hdr_date  = hdr_btn(T["col_date"],  "mtime")
-        self._hdr_date.set_size_request(140, -1)
-        hdr_sep3        = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        self._hdr_perms = hdr_btn(T["col_perms"], "perms")
-        self._hdr_perms.set_size_request(105, -1)
+        # Colonne Taille
+        self._factory_size = Gtk.SignalListItemFactory()
+        self._factory_size.connect("setup",  self._setup_size)
+        self._factory_size.connect("bind",   self._bind_size)
+        col_size = Gtk.ColumnViewColumn(title=T["col_size"],
+                                         factory=self._factory_size)
+        col_size.set_fixed_width(96)
+        col_size.set_resizable(True)
+        col_size.set_sorter(self._make_sorter("size"))
+        self._col_view.append_column(col_size)
 
-        for w in [self._hdr_name, hdr_sep1, self._hdr_size,
-                  hdr_sep2, self._hdr_date, hdr_sep3, self._hdr_perms]:
-            hdr.append(w)
+        # Colonne Modifié
+        self._factory_date = Gtk.SignalListItemFactory()
+        self._factory_date.connect("setup",  self._setup_date)
+        self._factory_date.connect("bind",   self._bind_date)
+        col_date = Gtk.ColumnViewColumn(title=T["col_date"],
+                                         factory=self._factory_date)
+        col_date.set_fixed_width(160)
+        col_date.set_resizable(True)
+        col_date.set_sorter(self._make_sorter("mtime"))
+        self._col_view.append_column(col_date)
 
-        self._hdr_box = hdr
-        self._hdr_sep = Gtk.Separator()
-        self.append(self._hdr_box)
-        self.append(self._hdr_sep)
-
-        # ── ListView ─────────────────────────────────────────────────────────
-        self._list_factory = Gtk.SignalListItemFactory()
-        self._list_factory.connect("setup",  self._row_setup)
-        self._list_factory.connect("bind",   self._row_bind)
-        self._list_factory.connect("unbind", self._row_unbind)
-
-        self._list_view = Gtk.ListView(model=self._selection,
-                                       factory=self._list_factory)
-        self._list_view.set_single_click_activate(False)
-        self._list_view.connect("activate", self._on_activate)
-        self._list_view.add_css_class("navigation-sidebar")
+        # Connecter le tri natif ColumnView → sort_model
+        # Tri par défaut sur la colonne Nom au premier affichage
+        self._col_view.connect("realize", self._on_col_view_realize)
 
         # ── GridView ─────────────────────────────────────────────────────────
         self._grid_factory = Gtk.SignalListItemFactory()
@@ -439,7 +441,6 @@ class FilePanel(Gtk.Box):
         self._grid_view.connect("activate", self._on_activate)
         self._grid_view.add_css_class("navigation-sidebar")
 
-        # Stack pour switcher entre list et grid sans re-parenting
         self._view_stack = Gtk.Stack()
         self._view_stack.set_vexpand(True)
         self._view_stack.set_transition_type(Gtk.StackTransitionType.NONE)
@@ -447,7 +448,7 @@ class FilePanel(Gtk.Box):
         scroll_list = Gtk.ScrolledWindow()
         scroll_list.set_vexpand(True)
         scroll_list.set_overlay_scrolling(False)
-        scroll_list.set_child(self._list_view)
+        scroll_list.set_child(self._col_view)
 
         scroll_grid = Gtk.ScrolledWindow()
         scroll_grid.set_vexpand(True)
@@ -513,69 +514,33 @@ class FilePanel(Gtk.Box):
 
     # -- Column factories ----------------------------------------------------
 
-    def _row_setup(self, factory, item):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+    # -- ColumnView factories -------------------------------------------------
 
-        # Nom (icône + label)
-        name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        name_box.set_hexpand(True)
-        name_box.set_margin_start(4)
+    def _setup_name(self, factory, item):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.set_margin_start(4)
+        box.set_hexpand(True)
         icon = Gtk.Image()
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        lbl_name = Gtk.Label()
-        lbl_name.set_halign(Gtk.Align.START)
-        lbl_name.set_ellipsize(Pango.EllipsizeMode.END)
-        lbl_name.set_hexpand(True)
-        name_box.append(icon)
-        name_box.append(lbl_name)
-
-        sep1     = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        lbl_size = Gtk.Label()
-        lbl_size.set_halign(Gtk.Align.END)
-        lbl_size.set_size_request(90, -1)
-        lbl_size.set_margin_end(6)
-
-        sep2     = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        lbl_date = Gtk.Label()
-        lbl_date.set_halign(Gtk.Align.START)
-        lbl_date.set_size_request(140, -1)
-        lbl_date.set_margin_start(6)
-
-        sep3      = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        lbl_perms = Gtk.Label()
-        lbl_perms.set_halign(Gtk.Align.START)
-        lbl_perms.set_size_request(105, -1)
-        lbl_perms.set_margin_start(4)
-        lbl_perms.add_css_class("dim-label")
-
-        for w in [name_box, sep1, lbl_size, sep2, lbl_date, sep3, lbl_perms]:
-            row.append(w)
-
-        item.set_child(row)
-
-        # ── Clic droit directement sur la row ─────────────────────────────
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_hexpand(True)
+        box.append(icon)
+        box.append(lbl)
+        item.set_child(box)
+        # Clic droit sur la cellule nom — fix right-click
         gc = Gtk.GestureClick()
         gc.set_button(3)
         gc.connect("pressed", self._on_row_right_click)
-        row.add_controller(gc)
+        box.add_controller(gc)
 
-    def _row_bind(self, factory, item):
-        entry    = item.get_item()
-        row      = item.get_child()
-        row._entry = entry          # ← clé du fix right-click
-
-        name_box  = row.get_first_child()
-        sep1      = name_box.get_next_sibling()
-        lbl_size  = sep1.get_next_sibling()
-        sep2      = lbl_size.get_next_sibling()
-        lbl_date  = sep2.get_next_sibling()
-        sep3      = lbl_date.get_next_sibling()
-        lbl_perms = sep3.get_next_sibling()
-
-        icon     = name_box.get_first_child()
+    def _bind_name(self, factory, item):
+        entry = item.get_item()
+        box   = item.get_child()
+        box._entry = entry
+        icon     = box.get_first_child()
         lbl_name = icon.get_next_sibling()
-
-        # Icône colorée
         icon_name = _icon_for(entry.path, entry.is_dir)
         theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
         if theme.has_icon(icon_name):
@@ -586,21 +551,35 @@ class FilePanel(Gtk.Box):
             icon.set_from_paintable(paintable)
         else:
             icon.set_from_icon_name(icon_name)
-
         lbl_name.set_text(entry.name)
         if entry.is_dir:
             lbl_name.add_css_class("bold")
         else:
             lbl_name.remove_css_class("bold")
 
-        lbl_size.set_text(entry.size_str)
-        lbl_date.set_text(entry.date_str)
-        lbl_perms.set_text(entry.perms_str)
+    def _unbind_name(self, factory, item):
+        box = item.get_child()
+        if box:
+            box._entry = None
 
-    def _row_unbind(self, factory, item):
-        row = item.get_child()
-        if row:
-            row._entry = None
+    def _setup_size(self, factory, item):
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_margin_start(4)
+        item.set_child(lbl)
+
+    def _bind_size(self, factory, item):
+        item.get_child().set_text(item.get_item().size_str)
+
+    def _setup_date(self, factory, item):
+        lbl = Gtk.Label()
+        lbl.set_halign(Gtk.Align.END)
+        lbl.set_margin_end(8)
+        item.set_child(lbl)
+
+    def _bind_date(self, factory, item):
+        item.get_child().set_text(item.get_item().date_str)
+
 
     # -- Grid factory ---------------------------------------------------------
 
@@ -667,16 +646,14 @@ class FilePanel(Gtk.Box):
             box._entry = None
 
     def _on_grid_toggle(self, btn):
-        self._is_grid = btn.get_active()
+        self._is_grid = not self._is_grid
         if self._is_grid:
             self._view_stack.set_visible_child_name("grid")
-            self._hdr_box.set_visible(False)
-            self._hdr_sep.set_visible(False)
+            self._grid_btn.set_icon_name("view-list-symbolic")
             self._grid_btn.set_tooltip_text(T["list_view"])
         else:
             self._view_stack.set_visible_child_name("list")
-            self._hdr_box.set_visible(True)
-            self._hdr_sep.set_visible(True)
+            self._grid_btn.set_icon_name("view-grid-symbolic")
             self._grid_btn.set_tooltip_text(T["grid_view"])
 
     # stubs gardés pour compatibilité
@@ -760,6 +737,33 @@ class FilePanel(Gtk.Box):
         else:
             if hasattr(self, "_spinner"):
                 self._spinner.stop()
+
+    def _make_sorter(self, sort_key):
+        """Crée un CustomSorter pour une colonne."""
+        def compare(a, b, _key=sort_key):
+            a_hidden = a.name.startswith(".")
+            b_hidden = b.name.startswith(".")
+            def group(e, hidden):
+                return (1 if hidden else 0) if e.is_dir else (3 if hidden else 2)
+            ga, gb = group(a, a_hidden), group(b, b_hidden)
+            if ga != gb:
+                return Gtk.Ordering.SMALLER if ga < gb else Gtk.Ordering.LARGER
+            va = getattr(a, _key, a.name)
+            vb = getattr(b, _key, b.name)
+            if isinstance(va, str):
+                va = va.lstrip(".").lower()
+                vb = vb.lstrip(".").lower()
+            if va < vb: return Gtk.Ordering.SMALLER
+            if va > vb: return Gtk.Ordering.LARGER
+            return Gtk.Ordering.EQUAL
+        return Gtk.CustomSorter.new(compare)
+
+    def _on_col_view_realize(self, col_view):
+        """Au premier affichage — activer le tri par défaut sur la colonne Nom."""
+        col = col_view.get_columns()[0]  # colonne Nom
+        col_view.sort_by_column(col, Gtk.SortType.ASCENDING)
+
+
 
     def _apply_sort(self):
         def compare(a, b, _):
@@ -1060,13 +1064,13 @@ class FilePanel(Gtk.Box):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", cb)
             ag.add_action(a)
-        self._list_view.insert_action_group("panel", ag)
+        self._col_view.insert_action_group("panel", ag)
 
         # Clic droit sur zone vide → menu minimal
         gesture = Gtk.GestureClick()
         gesture.set_button(3)
         gesture.connect("pressed", self._on_right_click)
-        self._list_view.add_controller(gesture)
+        self._col_view.add_controller(gesture)
 
     def _on_row_right_click(self, gesture, n, x, y):
         """Clic droit sur une row — entry dans row._entry."""
@@ -1080,11 +1084,11 @@ class FilePanel(Gtk.Box):
                         self._selection.select_item(i, True)
                     break
         # Coordonnées relatives au list_view
-        coords = row.translate_coordinates(self._list_view, x, y)
+        coords = row.translate_coordinates(self._col_view, x, y)
         cx, cy = coords if coords else (x, y)
         menu_model = self._build_context_menu()
         popover    = Gtk.PopoverMenu.new_from_model(menu_model)
-        popover.set_parent(self._list_view)
+        popover.set_parent(self._col_view)
         rect = Gdk.Rectangle()
         rect.x, rect.y, rect.width, rect.height = int(cx), int(cy), 1, 1
         popover.set_pointing_to(rect)
@@ -1095,7 +1099,7 @@ class FilePanel(Gtk.Box):
         """Clic droit sur zone vide."""
         menu_model = self._build_context_menu()
         popover    = Gtk.PopoverMenu.new_from_model(menu_model)
-        popover.set_parent(self._list_view)
+        popover.set_parent(self._col_view)
         rect = Gdk.Rectangle()
         rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
         popover.set_pointing_to(rect)
@@ -1129,8 +1133,8 @@ class FilePanel(Gtk.Box):
         add("<Ctrl>n",        lambda: self._on_new_folder(None))
         add("BackSpace",      lambda: self.navigate(os.path.dirname(self._path)))
 
-        self._list_view.add_controller(ctrl)
-        self._list_view.set_focusable(True)
+        self._col_view.add_controller(ctrl)
+        self._col_view.set_focusable(True)
 
         # Même raccourcis sur la vue grille
         ctrl2 = Gtk.ShortcutController()
@@ -1169,8 +1173,8 @@ class FilePanel(Gtk.Box):
         add("<Ctrl>n",        lambda: self._on_new_folder(None))
         add("BackSpace",      lambda: self.navigate(os.path.dirname(self._path)))
 
-        self._list_view.add_controller(ctrl)
-        self._list_view.set_focusable(True)
+        self._col_view.add_controller(ctrl)
+        self._col_view.set_focusable(True)
 
         # Même raccourcis sur la vue grille
         ctrl2 = Gtk.ShortcutController()
@@ -1191,7 +1195,7 @@ class FilePanel(Gtk.Box):
         self._grid_view.set_focusable(True)
 
     def _setup_dnd(self):
-        for view in [self._list_view, self._grid_view]:
+        for view in [self._col_view, self._grid_view]:
             drag_src = Gtk.DragSource()
             drag_src.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
             drag_src.connect("prepare", self._on_drag_prepare)
@@ -1520,8 +1524,8 @@ class DualPanelWindow(Adw.Window):
         except Exception:
             is_grid  = False
         if is_grid:
-            self._left._grid_btn.set_active(True)
-            self._right._grid_btn.set_active(True)
+            self._left._on_grid_toggle(self._left._grid_btn)
+            self._right._on_grid_toggle(self._right._grid_btn)
 
         # Mise à jour des labels copier/déplacer selon quel panneau est actif
         self._left._copy_btn.set_label(T["copy"])
