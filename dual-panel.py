@@ -1560,7 +1560,10 @@ class DualPanelWindow(Adw.Window):
         self._prog.set_margin_top(2)
         self._prog.set_margin_bottom(4)
 
+        sep_top = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_box.append(sep_top)
         main_box.append(paned_main)
         main_box.append(self._prog)
 
