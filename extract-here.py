@@ -91,6 +91,7 @@ SINGLE_EXTS = {
     ".tar", ".tgz", ".tbz2", ".txz", ".lzma", ".lz", ".lz4",
     ".cab", ".iso", ".arj", ".z", ".cpio", ".deb", ".rpm",
     ".dmg", ".wim", ".vhd", ".vhdx",
+    ".001",  # 7z multi-volumes
 }
 
 
