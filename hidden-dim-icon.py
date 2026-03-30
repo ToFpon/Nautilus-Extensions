@@ -29,22 +29,16 @@
 import gi
 gi.require_version("Nautilus", "4.0")
 gi.require_version("Gtk",     "4.0")
-from gi.repository import Nautilus, GObject, Gtk, GLib
+from gi.repository import Nautilus, GObject, Gtk, GLib, Gio
 
 # Opacité appliquée aux icônes des fichiers cachés
-DIM_OPACITY  = 0.35
-# Intervalle du timer en ms — assez long pour ne pas peser sur le CPU
-TICK_MS      = 800
-# Attribut marqueur pour éviter de retraiter un widget déjà traité
-_MARKER      = "_hdim_done"
-
+DIM_OPACITY = 0.35
 
 # ---------------------------------------------------------------------------
 # Helpers — parcours ciblé de l'arbre GTK
 # ---------------------------------------------------------------------------
 
 def _first_picture(widget):
-    """Retourne le premier Gtk.Picture trouvé sous widget, ou None."""
     if isinstance(widget, Gtk.Picture):
         return widget
     child = widget.get_first_child()
@@ -57,7 +51,6 @@ def _first_picture(widget):
 
 
 def _first_label_text(widget):
-    """Retourne le texte du premier Gtk.Label trouvé, ou None."""
     if isinstance(widget, Gtk.Label):
         return widget.get_text()
     child = widget.get_first_child()
@@ -70,19 +63,13 @@ def _first_label_text(widget):
 
 
 def _process_cell(cell):
-    """Applique ou retire le dim sur une NautilusNameCell/NautilusGridCell.
-    Retourne True si le widget était déjà traité (court-circuit possible)."""
-    # On relit le label à chaque fois — la cellule est recyclée par GTK
     text = _first_label_text(cell)
     if text is None:
         return
-
     is_hidden = text.startswith(".") and len(text) > 1
     pic       = _first_picture(cell)
     if pic is None:
         return
-
-    # Appliquer seulement si l'opacité doit changer — évite les redraws inutiles
     current = pic.get_opacity()
     target  = DIM_OPACITY if is_hidden else 1.0
     if abs(current - target) > 0.01:
@@ -90,18 +77,25 @@ def _process_cell(cell):
 
 
 def _walk(widget):
-    """Parcourt l'arbre en s'arrêtant dès qu'on trouve une cellule Nautilus."""
     name = type(widget).__name__
-
     if name in ("NautilusNameCell", "NautilusGridCell"):
         _process_cell(widget)
-        return          # pas besoin de descendre plus bas
-
+        return
     child = widget.get_first_child()
     while child:
         _walk(child)
         child = child.get_next_sibling()
 
+
+def _walk_all_windows(app):
+    """Walk toutes les fenêtres Nautilus."""
+    if app is not None:
+        windows = app.get_windows()
+    else:
+        windows = [w for w in Gtk.Window.list_toplevels()
+                   if "Nautilus" in type(w).__name__]
+    for win in windows:
+        _walk(win)
 
 # ---------------------------------------------------------------------------
 # Extension
@@ -112,24 +106,58 @@ class HiddenFileDimmer(GObject.GObject, Nautilus.MenuProvider):
 
     def __init__(self):
         super().__init__()
-        self._app = Gtk.Application.get_default()
-        GLib.timeout_add(TICK_MS, self._tick)
+        self._app      = Gtk.Application.get_default()
+        self._monitors = []   # GFileMonitor actifs
+        self._pending  = False  # un seul walk schedulé à la fois
 
-    def _tick(self):
-        # Utiliser get_windows() si dispo (plus ciblé que list_toplevels)
-        if self._app is not None:
-            windows = self._app.get_windows()
-        else:
-            # Fallback : filtrer les toplevel Nautilus
-            windows = [w for w in Gtk.Window.list_toplevels()
-                       if "Nautilus" in type(w).__name__]
+        # Walk initial — court délai pour laisser Nautilus finir son rendu
+        GLib.timeout_add(300, self._initial_walk)
 
-        for win in windows:
-            _walk(win)
-        return True     # continuer le timer
+        # Surveiller le home pour les changements filesystem
+        self._watch(GLib.get_home_dir())
+
+        # Timer léger pour capter les changements de vue liste↔grille
+        GLib.timeout_add(600, self._view_tick)
+
+    def _initial_walk(self):
+        """Premier passage au démarrage."""
+        _walk_all_windows(self._app)
+        return False  # one-shot
+
+    def _view_tick(self):
+        """Timer léger — reapplique le dim à chaque tick pour capter les changements de vue."""
+        _walk_all_windows(self._app)
+        return True  # continuer
+
+    def _watch(self, path):
+        """Installe un GFileMonitor sur un dossier."""
+        try:
+            gfile   = Gio.File.new_for_path(path)
+            monitor = gfile.monitor_directory(
+                Gio.FileMonitorFlags.NONE, None)
+            monitor.connect("changed", self._on_fs_changed)
+            self._monitors.append(monitor)  # garder en vie
+        except Exception:
+            pass
+
+    def _on_fs_changed(self, monitor, file, other, event):
+        """Filesystem changé → walk différé pour laisser Nautilus se mettre à jour."""
+        if self._pending:
+            return
+        self._pending = True
+        GLib.timeout_add(250, self._deferred_walk)
+
+    def _deferred_walk(self):
+        """Walk déclenché après un changement filesystem."""
+        _walk_all_windows(self._app)
+        self._pending = False
+        return False  # one-shot
 
     def get_file_items(self, files):
         return []
 
     def get_background_items(self, folder):
+        # Navigation vers un nouveau dossier → walk immédiat
+        # (léger délai pour laisser Nautilus rendre la nouvelle vue)
+        GLib.timeout_add(150, self._deferred_walk)
         return []
