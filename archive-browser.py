@@ -51,7 +51,7 @@ UNRAR_BIN = shutil.which("unrar") or "/usr/bin/unrar"
 RAR_BIN   = shutil.which("rar")   or "/usr/bin/rar"
 
 ARCHIVE_EXTS = {".zip", ".7z", ".tar", ".gz", ".bz2", ".xz",
-                ".rar", ".tgz", ".tbz2", ".cab", ".iso"}
+                ".rar", ".tgz", ".tbz2", ".cab", ".iso", ".001"}
 
 _lang = locale.getlocale()[0] or ""
 if _lang.startswith("fr"):
@@ -182,6 +182,11 @@ else:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _is_7z_multivolume(path):
+    """Détecte un volume 7z multi-volumes (.001, .002, ...)."""
+    return bool(re.search(r"\.\d{3}$", path))
+
+
 def _is_rar(path):
     ext = os.path.splitext(path)[1].lower()
     return ext in (".rar", ".r00", ".r01") or \
@@ -240,6 +245,33 @@ with libarchive.file_reader(sys.argv[1]) as a:
             pass
 
     # Fallback 7z/unrar (supporte les mots de passe)
+    if _is_7z_multivolume(path) or _is_rar(path):
+        pass  # continuer vers le bon fallback
+    if _is_7z_multivolume(path):
+        # 7z gère automatiquement les volumes .001/.002/...
+        try:
+            cmd = [SZ_BIN, "l"]
+            if password:
+                cmd.append("-p" + password)
+            cmd.append(path)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            in_list = False
+            for line in r.stdout.splitlines():
+                if re.match(r"^-{10,}", line.strip()):
+                    if in_list: break
+                    in_list = True
+                    continue
+                if not in_list or len(line) < 53:
+                    continue
+                attr   = line[20:25].strip()
+                size   = line[25:53].split()[0] if line[25:53].split() else "0"
+                name   = line[53:].strip()
+                is_dir = "D" in attr
+                if name:
+                    entries.append((name, size, is_dir))
+        except Exception:
+            pass
+        return entries
     if _is_rar(path):
         try:
             cmd = [UNRAR_BIN, "v"]
@@ -292,6 +324,30 @@ with libarchive.file_reader(sys.argv[1]) as a:
 def _extract(archive, names, dst, progress_cb=None, password=""):
     """Extraction via 7z/unrar avec progression optionnelle."""
     os.makedirs(dst, exist_ok=True)
+    if _is_7z_multivolume(archive):
+        # 7z gère les volumes automatiquement
+        pwd_args = ["-p" + password] if password else []
+        cmd = [SZ_BIN, "x", archive, f"-o{dst}", "-y",
+               "-bsp1", "-bso0"] + pwd_args + names
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        BS = bytes([8])
+        buf = b""
+        while True:
+            ch = proc.stdout.read(1)
+            if not ch:
+                break
+            if ch == BS:
+                seg = buf.decode("utf-8", errors="replace").strip()
+                buf = b""
+                if seg:
+                    m = re.search(r"([0-9]{1,3}) *%", seg)
+                    if m and progress_cb:
+                        progress_cb(int(m.group(1)) / 100.0)
+            else:
+                buf += ch
+        proc.wait()
+        return
     if _is_rar(archive):
         pwd_arg = "-p" + password if password else "-p-"
         cmd = [UNRAR_BIN, "x", "-y", pwd_arg, archive] + names + [dst + "/"]
