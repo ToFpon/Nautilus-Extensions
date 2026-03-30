@@ -180,7 +180,7 @@ class ExtManagerWindow(Adw.Window):
 
     def __init__(self):
         super().__init__(title=T["title"])
-        self.set_default_size(560, 600)
+        self.set_default_size(560, -1)
         self.set_resizable(True)
         self.set_transient_for(_nautilus_window())
 
@@ -194,13 +194,8 @@ class ExtManagerWindow(Adw.Window):
         main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         main.set_vexpand(True)
 
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_vexpand(True)
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-
         self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        scroll.set_child(self._content)
-        main.append(scroll)
+        main.append(self._content)
 
         # Bouton redémarrer
         main.append(Gtk.Separator())
