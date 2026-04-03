@@ -212,6 +212,16 @@ else:
 
 
 
+# Vérifier si hidden-dim est actif
+_EXTENSIONS_DIR = os.path.expanduser("~/.local/share/nautilus-python/extensions")
+_DIM_OPACITY    = 0.35
+
+def _hidden_dim_active():
+    """Retourne True si hidden-dim-icon.py ou hidden-dim-all.py est actif."""
+    return (os.path.isfile(os.path.join(_EXTENSIONS_DIR, "hidden-dim-icon.py")) or
+            os.path.isfile(os.path.join(_EXTENSIONS_DIR, "hidden-dim-all.py")))
+
+
 def _nautilus_window():
     app = Gtk.Application.get_default()
     if app is None:
@@ -557,6 +567,15 @@ class FilePanel(Gtk.Box):
         else:
             lbl_name.remove_css_class("bold")
 
+        # Dim fichiers/dossiers cachés si hidden-dim-icon est actif
+        is_hidden = entry.name.startswith(".") and len(entry.name) > 1
+        if _hidden_dim_active() and is_hidden:
+            icon.set_opacity(_DIM_OPACITY)
+            lbl_name.add_css_class("dim-label")
+        else:
+            icon.set_opacity(1.0)
+            lbl_name.remove_css_class("dim-label")
+
     def _unbind_name(self, factory, item):
         box = item.get_child()
         if box:
@@ -639,6 +658,15 @@ class FilePanel(Gtk.Box):
             lbl.add_css_class("bold")
         else:
             lbl.remove_css_class("bold")
+
+        # Dim fichiers/dossiers cachés si hidden-dim-icon est actif
+        is_hidden = entry.name.startswith(".") and len(entry.name) > 1
+        if _hidden_dim_active() and is_hidden:
+            icon.set_opacity(_DIM_OPACITY)
+            lbl.add_css_class("dim-label")
+        else:
+            icon.set_opacity(1.0)
+            lbl.remove_css_class("dim-label")
 
     def _grid_unbind(self, factory, item):
         box = item.get_child()
