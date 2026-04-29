@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# NAME: Dual Panel — Nautilus Python Extension
+# NAME: Nautilus Edit Gedit — Nautilus Python Extension
 # DESC: Full-featured dual-panel file manager launched from Nautilus
 # AUTHOR: Tof
 # VERSION: 1.0
