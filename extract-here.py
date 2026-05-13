@@ -34,7 +34,6 @@ import subprocess
 import threading
 import locale
 import tempfile
-from pathlib import PurePosixPath, PureWindowsPath
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -56,7 +55,6 @@ if _lang.startswith("fr"):
         "done_msg":       "Extrait dans : {dst}",
         "err_7z":         "p7zip est introuvable.\nInstallez-le avec :\nsudo apt install p7zip-full",
         "err_failed":     "L'extraction a échoué (code {code})",
-        "err_unsafe":     "Chemins dangereux détectés dans l'archive (.. ou absolus). Extraction refusée.",
         "err_password":   "Mot de passe incorrect ou archive corrompue.",
         "password_label": "Mot de passe (laisser vide si aucun) :",
         "volumes_found":  "{n} partie(s) détectée(s) — extraction automatique.",
@@ -72,7 +70,6 @@ else:
         "done_msg":       "Extracted to: {dst}",
         "err_7z":         "p7zip not found.\nInstall it with:\nsudo apt install p7zip-full",
         "err_failed":     "Extraction failed (exit code {code})",
-        "err_unsafe":     "Unsafe paths detected in archive (.. or absolute). Refusing to extract.",
         "err_password":   "Wrong password or corrupted archive.",
         "password_label": "Password (leave empty if none):",
         "volumes_found":  "{n} part(s) found — extracting automatically.",
@@ -188,34 +185,6 @@ def _is_encrypted(path: str) -> bool:
         # Méthode AES explicite
         if "Method = AES" in output:
             return True
-        return False
-    except Exception:
-        return False
-
-
-def _archive_has_unsafe_paths(path: str) -> bool:
-    """Best-effort Zip-Slip check using `7z l -slt`.
-    Returns True if it detects absolute paths or '..' traversal in entry names.
-    If listing fails, returns False (cannot prove unsafe)."""
-    try:
-        r = subprocess.run(
-            [SZ_BIN, "l", "-slt", '-p""', path],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if r.returncode != 0:
-            return False
-        for line in r.stdout.splitlines():
-            if not line.startswith("Path = "):
-                continue
-            name = line[len("Path = ") :].strip()
-            if not name:
-                continue
-            if name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\\\/]", name):
-                return True
-            if ".." in PurePosixPath(name).parts or ".." in PureWindowsPath(name).parts:
-                return True
         return False
     except Exception:
         return False
@@ -427,11 +396,6 @@ class ExtractProgressDialog(Adw.Window):
 
     def _extract(self):
         try:
-            # Zip-Slip hardening (best effort): refuse extraction if archive
-            # advertises absolute paths or traversal entries.
-            if _archive_has_unsafe_paths(self._first_part):
-                raise RuntimeError(T["err_unsafe"])
-
             if _is_double(self._first_part):
                 # Passe 1 : bzip2/gz/xz → .tar
                 tmp_dir = tempfile.mkdtemp(
