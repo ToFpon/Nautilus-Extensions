@@ -331,11 +331,24 @@ class ExtManagerWindow(Adw.Window):
         GLib.timeout_add(200, self._restart_nautilus)
 
     def _restart_nautilus(self):
-        # Lancer le nouveau Nautilus en arrière-plan AVANT de tuer l'actuel
-        subprocess.Popen(["bash", "-c",
-            "sleep 0.8 && nautilus &"
-        ])
-        # Tuer proprement le process actuel
+        # Avoid `bash -c`: there is no user input here, but a shell is still an
+        # unnecessary risk surface.
+        #
+        # Start a new Nautilus process in the background before quitting the
+        # current one, to reduce the chance of the user ending up without a
+        # file manager window.
+        try:
+            subprocess.Popen(
+                ["nautilus"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except Exception:
+            # If spawning fails, still try to quit the current instance.
+            pass
+        # Quit the current Nautilus cleanly
         subprocess.Popen(["nautilus", "-q"])
         return False
 
