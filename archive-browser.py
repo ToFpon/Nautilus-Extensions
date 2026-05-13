@@ -33,6 +33,7 @@ import subprocess
 import tempfile
 import threading
 import locale
+from pathlib import PurePosixPath, PureWindowsPath
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -323,6 +324,16 @@ with libarchive.file_reader(sys.argv[1]) as a:
 def _extract(archive, names, dst, progress_cb=None, password=""):
     """Extraction via 7z/unrar avec progression optionnelle."""
     os.makedirs(dst, exist_ok=True)
+    # Basic Zip-Slip prevention: refuse absolute paths or path traversal.
+    # `names` come from inside the archive and must not be treated as trusted.
+    for n in names:
+        if not n:
+            continue
+        if n.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\\\/]", n):
+            raise RuntimeError(f"Unsafe absolute path in archive entry: {n!r}")
+        # Consider both POSIX and Windows-style separators.
+        if ".." in PurePosixPath(n).parts or ".." in PureWindowsPath(n).parts:
+            raise RuntimeError(f"Unsafe path traversal in archive entry: {n!r}")
     if _is_7z_multivolume(archive):
         # 7z gère les volumes automatiquement
         pwd_args = ["-p" + password] if password else []

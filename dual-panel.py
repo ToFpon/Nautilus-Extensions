@@ -1049,9 +1049,14 @@ class FilePanel(Gtk.Box):
 
     def _open_terminal(self, _btn):
         target = self._get_target_dir()
-        for term in ["gnome-terminal", "xterm", "konsole", "xfce4-terminal"]:
+        # Prefer Ghostty if installed, then fall back to common terminals.
+        for term in ["ghostty", "gnome-terminal", "xterm", "konsole", "xfce4-terminal"]:
             if shutil.which(term):
-                subprocess.Popen([term], cwd=target)
+                # Ghostty supports `working-directory` as a config key CLI arg.
+                if term == "ghostty":
+                    subprocess.Popen([term, f"--working-directory={target}"])
+                else:
+                    subprocess.Popen([term], cwd=target)
                 return
 
     # -- Menu contextuel clic droit -----------------------------------------
