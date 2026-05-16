@@ -434,6 +434,7 @@ A visual `.deb` package installer — no terminal needed. Right-click on any `.d
 **Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
 
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0` `gir1.2-adw-1` `pkexec`
+
 ---
 
 ## 🌍 Internationalization
