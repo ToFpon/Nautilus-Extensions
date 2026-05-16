@@ -6,6 +6,10 @@ A collection of productivity-focused Python extensions for Nautilus (GNOME Files
 
 
 
+
+
+
+
 📦 Extensions
 Extension	File	Description
 🎨 Annotate Image	annotate-image.py	Full-featured PNG annotation editor
