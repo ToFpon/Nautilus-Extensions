@@ -425,6 +425,7 @@ A visual `.deb` package installer — no terminal needed. Right-click on any `.d
 - Real-time scrollable terminal output during installation
 - Color-coded output (green = success, red = error)
 - Authentication via `pkexec` — graphical password prompt
+- Automatic dependency check before installation — lists missing packages
 - Cancel button during installation, Close button when done
 - Warning reminder about third-party package risks
 
