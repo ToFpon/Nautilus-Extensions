@@ -56,6 +56,10 @@ if _lang.startswith("fr"):
         "not_deb":       "Ce fichier n'est pas un paquet .deb valide.",
         "confirm":       "Voulez-vous installer ce paquet ?",
         "warning":       "⚠ L'installation de paquets tiers peut être risquée.\nVérifiez la source avant de continuer.",
+        "deps_none":     "Aucune dépendance supplémentaire requise.",
+        "deps_title":    "Dépendances qui seront installées :",
+        "deps_checking": "Vérification des dépendances…",
+        "deps_error":    "Impossible de vérifier les dépendances.",
     }
 elif _lang.startswith("de"):
     T = {
@@ -73,6 +77,10 @@ elif _lang.startswith("de"):
         "not_deb":       "Diese Datei ist kein gültiges .deb-Paket.",
         "confirm":       "Möchten Sie dieses Paket installieren?",
         "warning":       "⚠ Die Installation von Drittanbieter-Paketen kann riskant sein.\nBitte Quelle vor der Installation prüfen.",
+        "deps_none":     "Keine zusätzlichen Abhängigkeiten erforderlich.",
+        "deps_title":    "Folgende Abhängigkeiten werden installiert:",
+        "deps_checking": "Abhängigkeiten werden geprüft…",
+        "deps_error":    "Abhängigkeiten konnten nicht geprüft werden.",
     }
 else:
     T = {
@@ -90,6 +98,10 @@ else:
         "not_deb":       "This file is not a valid .deb package.",
         "confirm":       "Do you want to install this package?",
         "warning":       "⚠ Installing third-party packages can be risky.\nPlease verify the source before continuing.",
+        "deps_none":     "No additional dependencies required.",
+        "deps_title":    "Dependencies that will be installed:",
+        "deps_checking": "Checking dependencies…",
+        "deps_error":    "Could not check dependencies.",
     }
 
 # ---------------------------------------------------------------------------
@@ -99,6 +111,40 @@ else:
 def _nautilus_window():
     app = Gtk.Application.get_default()
     return app.get_active_window() if app else None
+
+def _check_deps(path):
+    """Retourne la liste des dépendances manquantes via apt-get --simulate."""
+    try:
+        out = subprocess.check_output(
+            ["apt-get", "install", "--simulate", "--no-install-recommends", path],
+            stderr=subprocess.STDOUT).decode(errors="replace")
+        deps = []
+        for line in out.splitlines():
+            # Les lignes "Inst paquet" indiquent ce qui sera installé
+            if line.startswith("Inst "):
+                parts = line.split()
+                pkg = parts[1]
+                ver = parts[2] if len(parts) > 2 else ""
+                # Exclure le paquet lui-même
+                pkg_name = os.path.basename(path).split("_")[0]
+                if pkg != pkg_name:
+                    deps.append(f"{pkg} {ver}".strip())
+        return deps
+    except subprocess.CalledProcessError as e:
+        # apt-get --simulate peut retourner une erreur non bloquante
+        deps = []
+        for line in (e.output or b"").decode(errors="replace").splitlines():
+            if line.startswith("Inst "):
+                parts = line.split()
+                pkg = parts[1]
+                ver = parts[2] if len(parts) > 2 else ""
+                pkg_name = os.path.basename(path).split("_")[0]
+                if pkg != pkg_name:
+                    deps.append(f"{pkg} {ver}".strip())
+        return deps
+    except Exception:
+        return None  # None = erreur
+
 
 def _pkg_info(path):
     """Retourne (name, version, description) via dpkg-deb."""
@@ -200,8 +246,30 @@ class DebInstallerWindow(Adw.Window):
         warn_lbl.set_margin_top(6)
         info_box.append(warn_lbl)
 
+        # Dépendances
+        self._deps_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self._deps_box.set_margin_start(16)
+        self._deps_box.set_margin_end(16)
+        self._deps_box.set_margin_top(4)
+        self._deps_box.set_margin_bottom(8)
+
+        self._deps_spinner = Gtk.Spinner()
+        self._deps_spinner.start()
+        deps_loading_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        deps_loading_box.append(self._deps_spinner)
+        deps_loading_lbl = Gtk.Label(label=T["deps_checking"])
+        deps_loading_lbl.add_css_class("dim-label")
+        deps_loading_box.append(deps_loading_lbl)
+        self._deps_box.append(deps_loading_box)
+        self._deps_loading_box = deps_loading_box
+
+        info_box.append(self._deps_box)
+
         main.append(info_box)
         main.append(Gtk.Separator())
+
+        # Lancer la vérification des dépendances en arrière-plan
+        threading.Thread(target=self._load_deps, daemon=True).start()
 
         # ── Terminal output ───────────────────────────────────────────────────
         scroll = Gtk.ScrolledWindow()
@@ -259,6 +327,38 @@ class DebInstallerWindow(Adw.Window):
         tv.set_content(main)
         self.set_content(tv)
 
+    # ── Dépendances ───────────────────────────────────────────────────────────
+
+    def _load_deps(self):
+        deps = _check_deps(self._deb_path)
+        GLib.idle_add(self._show_deps, deps)
+
+    def _show_deps(self, deps):
+        # Supprimer le spinner
+        self._deps_box.remove(self._deps_loading_box)
+
+        if deps is None:
+            lbl = Gtk.Label(label=T["deps_error"])
+            lbl.set_halign(Gtk.Align.START)
+            lbl.add_css_class("dim-label")
+            self._deps_box.append(lbl)
+        elif not deps:
+            lbl = Gtk.Label(label=T["deps_none"])
+            lbl.set_halign(Gtk.Align.START)
+            lbl.add_css_class("dim-label")
+            lbl.add_css_class("success")
+            self._deps_box.append(lbl)
+        else:
+            title = Gtk.Label(label=T["deps_title"])
+            title.set_halign(Gtk.Align.START)
+            title.add_css_class("heading")
+            self._deps_box.append(title)
+            for dep in deps:
+                dep_lbl = Gtk.Label(label=f"  • {dep}")
+                dep_lbl.set_halign(Gtk.Align.START)
+                dep_lbl.add_css_class("dim-label")
+                self._deps_box.append(dep_lbl)
+
     # ── Helpers TextView ──────────────────────────────────────────────────────
 
     def _append_text(self, text, tag=None):
@@ -278,13 +378,13 @@ class DebInstallerWindow(Adw.Window):
         self._btn_install.set_sensitive(False)
         self._btn_cancel.set_sensitive(True)
         self._status_lbl.set_text(T["installing"])
-        self._append_text(f"$ pkexec dpkg -i {self._deb_path}\n", self._tag_dim)
+        self._append_text(f"$ pkexec apt install -y {self._deb_path}\n", self._tag_dim)
         threading.Thread(target=self._run_install, daemon=True).start()
 
     def _run_install(self):
         try:
             self._process = subprocess.Popen(
-                ["pkexec", "dpkg", "-i", self._deb_path],
+                ["pkexec", "apt", "install", "-y", self._deb_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
