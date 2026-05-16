@@ -416,6 +416,26 @@ By default, Nautilus only slightly reduces the opacity of the icon — barely no
 
 ---
 
+### 📦 Deb Installer — `deb-installer.py`
+
+A visual `.deb` package installer — no terminal needed. Right-click on any `.deb` file and install it with a clean graphical interface.
+
+**Features:**
+- Displays package name, version and description
+- Real-time scrollable terminal output during installation
+- Color-coded output (green = success, red = error)
+- Authentication via `pkexec` — graphical password prompt
+- Cancel button during installation, Close button when done
+- Warning reminder about third-party package risks
+
+**Triggers:**
+- Right-click on a `.deb` file → **Install package**
+
+**Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0` `gir1.2-adw-1` `pkexec`
+---
+
 ## 🌍 Internationalization
 
 All extensions automatically detect the system language and are fully available in both **English** and **French**.
@@ -439,23 +459,4 @@ All extensions automatically detect the system language and are fully available 
 This project is released under the **GNU GPL v3** license.  
 Based on the original *Compress PDF* bash script by Ricardo Ferreira.
 
----
 
-### 📦 Deb Installer — `deb-installer.py`
-
-A visual `.deb` package installer — no terminal needed. Right-click on any `.deb` file and install it with a clean graphical interface.
-
-**Features:**
-- Displays package name, version and description
-- Real-time scrollable terminal output during installation
-- Color-coded output (green = success, red = error)
-- Authentication via `pkexec` — graphical password prompt
-- Cancel button during installation, Close button when done
-- Warning reminder about third-party package risks
-
-**Triggers:**
-- Right-click on a `.deb` file → **Install package**
-
-**Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
-
-**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0` `gir1.2-adw-1` `pkexec`
