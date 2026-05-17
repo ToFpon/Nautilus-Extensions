@@ -246,12 +246,18 @@ class DebInstallerWindow(Adw.Window):
         warn_lbl.set_margin_top(6)
         info_box.append(warn_lbl)
 
-        # Dépendances
+        # Dépendances — dans un ScrolledWindow pour ne pas pousser les boutons
+        deps_scroll = Gtk.ScrolledWindow()
+        deps_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        deps_scroll.set_max_content_height(160)
+        deps_scroll.set_propagate_natural_height(True)
+
         self._deps_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self._deps_box.set_margin_start(16)
         self._deps_box.set_margin_end(16)
         self._deps_box.set_margin_top(4)
         self._deps_box.set_margin_bottom(8)
+        deps_scroll.set_child(self._deps_box)
 
         self._deps_spinner = Gtk.Spinner()
         self._deps_spinner.start()
@@ -263,7 +269,7 @@ class DebInstallerWindow(Adw.Window):
         self._deps_box.append(deps_loading_box)
         self._deps_loading_box = deps_loading_box
 
-        info_box.append(self._deps_box)
+        info_box.append(deps_scroll)
 
         main.append(info_box)
         main.append(Gtk.Separator())
