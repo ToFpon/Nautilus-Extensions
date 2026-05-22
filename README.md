@@ -439,31 +439,6 @@ A visual `.deb` package installer — no terminal needed. Right-click on any `.d
 
 ---
 
-## 🌍 Internationalization
-
-All extensions automatically detect the system language and are fully available in both **English** and **French**.
-
----
-
-## 🖥️ Compatibility
-
-| Component | Required version |
-|---|---|
-| Nautilus | 43+ (API 4.0) |
-| Python | 3.10+ |
-| GTK | 4.0 |
-| Libadwaita | 1.x |
-| Ubuntu / Debian | 23.04+ |
-
----
-
-## 📄 License
-
-This project is released under the **GNU GPL v3** license.  
-Based on the original *Compress PDF* bash script by Ricardo Ferreira.
-
----
-
 ### 🔍 Search Content — `search-content.py`
 
 A real text content search in files — much more reliable than Nautilus' built-in search which depends on Tracker3 indexing. Right-click in any folder and search through file contents instantly.
@@ -489,3 +464,30 @@ A real text content search in files — much more reliable than Nautilus' built-
 **Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0` `gir1.2-adw-1` `grep`
 
 **Optional:** `ripgrep` for faster searches — `sudo apt install ripgrep`
+
+---
+
+## 🌍 Internationalization
+
+All extensions automatically detect the system language and are fully available in both **English** and **French**.
+
+---
+
+## 🖥️ Compatibility
+
+| Component | Required version |
+|---|---|
+| Nautilus | 43+ (API 4.0) |
+| Python | 3.10+ |
+| GTK | 4.0 |
+| Libadwaita | 1.x |
+| Ubuntu / Debian | 23.04+ |
+
+---
+
+## 📄 License
+
+This project is released under the **GNU GPL v3** license.  
+Based on the original *Compress PDF* bash script by Ricardo Ferreira.
+
+
