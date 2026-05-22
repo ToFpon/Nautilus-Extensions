@@ -29,6 +29,7 @@
 | 🗜️ Archive Browser | `archive-browser.py` | Browse, extract and **create** archives (zip, 7z, rar, tar…) |
 | ✂️ Cut Item Dimmer | `cut-dim.py` | Visual dimming of cut (Ctrl+X) files and folders |
 | 📦 Deb Installer | `deb-installer.py` | Visual .deb package installer with real-time output |
+| 🔍 Search Content | `search-content.py` | Real text content search in files using grep/ripgrep |
 
 ---
 
@@ -461,4 +462,30 @@ All extensions automatically detect the system language and are fully available 
 This project is released under the **GNU GPL v3** license.  
 Based on the original *Compress PDF* bash script by Ricardo Ferreira.
 
+---
 
+### 🔍 Search Content — `search-content.py`
+
+A real text content search in files — much more reliable than Nautilus' built-in search which depends on Tracker3 indexing. Right-click in any folder and search through file contents instantly.
+
+**Features:**
+- Real content search using `grep` (always available) or `ripgrep` for speed (if installed)
+- Filterable by file extensions (e.g. `py,txt,md`)
+- Recursive or current folder only
+- Case sensitive / regex options
+- Skips binary files and common heavy folders (`.git`, `node_modules`, `__pycache__`)
+- Threaded search — UI stays responsive
+- Double-click a result to open the file
+- Right-click for context menu: Open file / Open with Gedit / Open folder / Copy path
+- Result limit (2000) to prevent UI freeze on huge searches
+- Timeout 300s for safety
+
+**Triggers:**
+- Right-click on a folder → **Search in files**
+- Right-click on background → **Search in files**
+
+**Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0` `gir1.2-adw-1` `grep`
+
+**Optional:** `ripgrep` for faster searches — `sudo apt install ripgrep`
