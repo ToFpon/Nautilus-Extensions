@@ -30,6 +30,7 @@
 | ✂️ Cut Item Dimmer | `cut-dim.py` | Visual dimming of cut (Ctrl+X) files and folders |
 | 📦 Deb Installer | `deb-installer.py` | Visual .deb package installer with real-time output |
 | 🔍 Search Content | `search-content.py` | Real text content search in files using grep/ripgrep |
+| 🎵 Video to Audio | `video-to-audio.py` | Extract audio track from video files (MP3, M4A, OGG, OPUS, FLAC, WAV) |
 
 ---
 
@@ -490,4 +491,24 @@ All extensions automatically detect the system language and are fully available 
 This project is released under the **GNU GPL v3** license.  
 Based on the original *Compress PDF* bash script by Ricardo Ferreira.
 
+---
 
+### 🎵 Video to Audio — `video-to-audio.py`
+
+Extract audio tracks from video files in batch — right-click on one or several videos and convert in a single operation.
+
+**Features:**
+- Batch conversion — select multiple video files at once
+- 6 output formats: MP3, M4A, OGG, OPUS, FLAC, WAV
+- 4 quality levels: 320 / 192 / 128 kbps, or stream copy (no re-encoding)
+- Real-time progress bar with percentage parsed from ffmpeg output
+- Per-file status indicator (✓ / ✗)
+- Cancel button kills the ffmpeg process cleanly via process group
+- Supports MP4, MKV, AVI, MOV, WEBM, FLV, WMV, M4V, MPG, MPEG, 3GP, TS, OGV, VOB
+
+**Triggers:**
+- Right-click on one or more video files → **Extract audio**
+
+**Languages:** French 🇫🇷 · English 🇬🇧 · German 🇩🇪
+
+**Dependencies:** `python3-nautilus` `python3-gi` `gir1.2-gtk-4.0` `gir1.2-adw-1` `ffmpeg`
