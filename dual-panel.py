@@ -97,6 +97,7 @@ if _lang.startswith("de"):
         "context_new_folder":  "Neuer Ordner",
         "context_new_file":    "Neue Datei",
         "context_terminal":    "In Terminal öffnen",
+        "context_extract_audio": "Audio extrahieren",
     }
 
 elif _lang.startswith("fr"):
@@ -150,6 +151,7 @@ elif _lang.startswith("fr"):
         "context_new_folder":  "Nouveau dossier",
         "context_new_file":    "Nouveau fichier",
         "context_terminal":    "Terminal ici",
+        "context_extract_audio": "Extraire l'audio",
     }
 else:
     T = {
@@ -202,6 +204,7 @@ else:
         "context_new_folder":  "New folder",
         "context_new_file":    "New file",
         "context_terminal":    "Terminal here",
+        "context_extract_audio": "Extract audio",
     }
 
 
@@ -211,6 +214,45 @@ else:
 
 
 
+
+# Extensions vidéo pour Video to Audio
+_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv",
+               ".m4v", ".mpg", ".mpeg", ".3gp", ".ts", ".ogv", ".vob"}
+
+def _video_to_audio_active():
+    """Retourne True si video-to-audio.py est dans les extensions."""
+    return os.path.isfile(os.path.join(
+        os.path.expanduser("~/.local/share/nautilus-python/extensions"),
+        "video-to-audio.py"))
+
+_v2a_window_class = None  # cache de la classe pour éviter le re-register GType
+
+def _launch_video_to_audio(paths):
+    """Charge dynamiquement video-to-audio.py et lance la fenêtre."""
+    global _v2a_window_class
+    try:
+        if _v2a_window_class is None:
+            # 1. Essayer de récupérer la classe déjà enregistrée par Nautilus
+            import sys
+            for mod_name, mod in list(sys.modules.items()):
+                if mod and hasattr(mod, "VideoToAudioWindow"):
+                    _v2a_window_class = mod.VideoToAudioWindow
+                    break
+            # 2. Sinon, charger le module
+            if _v2a_window_class is None:
+                import importlib.util
+                ext_path = os.path.join(
+                    os.path.expanduser("~/.local/share/nautilus-python/extensions"),
+                    "video-to-audio.py")
+                spec = importlib.util.spec_from_file_location("video_to_audio", ext_path)
+                mod  = importlib.util.module_from_spec(spec)
+                sys.modules["video_to_audio"] = mod
+                spec.loader.exec_module(mod)
+                _v2a_window_class = mod.VideoToAudioWindow
+
+        _v2a_window_class(paths).present()
+    except Exception as e:
+        print(f"[dual-panel] Failed to launch video-to-audio: {e}")
 
 # Vérifier si hidden-dim est actif
 _EXTENSIONS_DIR = os.path.expanduser("~/.local/share/nautilus-python/extensions")
@@ -776,6 +818,8 @@ class FilePanel(Gtk.Box):
             ga, gb = group(a, a_hidden), group(b, b_hidden)
             if ga != gb:
                 return Gtk.Ordering.SMALLER if ga < gb else Gtk.Ordering.LARGER
+            if not _key:
+                _key = "name"
             va = getattr(a, _key, a.name)
             vb = getattr(b, _key, b.name)
             if isinstance(va, str):
@@ -1070,6 +1114,18 @@ class FilePanel(Gtk.Box):
         if selected:
             menu.append(T["context_delete"],      "panel.delete-trash")
             menu.append(T["context_delete_perm"],  "panel.delete-perm")
+
+        # Extraire l'audio — uniquement si video-to-audio.py est installé
+        # ET si tous les fichiers sélectionnés sont des vidéos
+        if selected and _video_to_audio_active():
+            all_videos = all(
+                not e.is_dir and
+                os.path.splitext(e.path)[1].lower() in _VIDEO_EXTS
+                for e in selected
+            )
+            if all_videos:
+                menu.append(T["context_extract_audio"], "panel.extract-audio")
+
         menu.append(T["context_new_folder"], "panel.new-folder")
         menu.append(T["context_new_file"],   "panel.new-file")
         menu.append(T["context_terminal"],   "panel.terminal")
@@ -1087,6 +1143,7 @@ class FilePanel(Gtk.Box):
             "new-folder":   lambda *_: self._on_new_folder(None),
             "new-file":     lambda *_: self._on_new_file(None),
             "terminal":     lambda *_: self._open_terminal(None),
+            "extract-audio": lambda *_: self._on_extract_audio(),
         }
         for name, cb in actions.items():
             a = Gio.SimpleAction.new(name, None)
@@ -1141,6 +1198,15 @@ class FilePanel(Gtk.Box):
                     f"file://{selected[0].path}", None)
             except Exception:
                 pass
+
+    def _on_extract_audio(self):
+        """Lance video-to-audio sur les fichiers vidéo sélectionnés."""
+        selected = self.get_selected_entries()
+        paths = [e.path for e in selected
+                 if not e.is_dir and
+                 os.path.splitext(e.path)[1].lower() in _VIDEO_EXTS]
+        if paths:
+            _launch_video_to_audio(paths)
 
     # -- Raccourcis clavier --------------------------------------------------
 

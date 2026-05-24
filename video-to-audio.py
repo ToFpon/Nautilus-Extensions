@@ -61,6 +61,9 @@ if _lang.startswith("fr"):
         "all_done":     "Extraction terminée — {ok} sur {total} réussie(s).",
         "cancelled":    "Extraction annulée.",
         "overwrite":    "Le fichier existe déjà — il sera écrasé.",
+        "dest_folder":  "Dossier de destination :",
+        "choose":       "Choisir…",
+        "same_as_src":  "Même dossier que la source",
     }
 elif _lang.startswith("de"):
     T = {
@@ -81,6 +84,9 @@ elif _lang.startswith("de"):
         "all_done":     "Extraktion abgeschlossen — {ok} von {total} erfolgreich.",
         "cancelled":    "Extraktion abgebrochen.",
         "overwrite":    "Datei existiert bereits — wird überschrieben.",
+        "dest_folder":  "Zielordner:",
+        "choose":       "Wählen…",
+        "same_as_src":  "Gleicher Ordner wie Quelle",
     }
 else:
     T = {
@@ -101,6 +107,9 @@ else:
         "all_done":     "Extraction complete — {ok} of {total} succeeded.",
         "cancelled":    "Extraction cancelled.",
         "overwrite":    "File already exists — will be overwritten.",
+        "dest_folder":  "Destination folder:",
+        "choose":       "Choose…",
+        "same_as_src":  "Same folder as source",
     }
 
 # Extensions vidéo supportées
@@ -205,6 +214,19 @@ class VideoToAudioWindow(Adw.Window):
         qual_row.append(self._qual_drop)
         opts.append(qual_row)
 
+        # Dossier de destination
+        self._dest_folder = None  # None = même dossier que la source
+        dest_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        dest_lbl = Gtk.Label(label=T["dest_folder"])
+        dest_lbl.set_halign(Gtk.Align.START)
+        dest_lbl.set_size_request(120, -1)
+        dest_row.append(dest_lbl)
+        self._dest_btn = Gtk.Button(label=T["same_as_src"])
+        self._dest_btn.set_hexpand(True)
+        self._dest_btn.connect("clicked", self._on_choose_folder)
+        dest_row.append(self._dest_btn)
+        opts.append(dest_row)
+
         main.append(opts)
         main.append(Gtk.Separator())
 
@@ -282,8 +304,29 @@ class VideoToAudioWindow(Adw.Window):
 
     def _on_fmt_changed(self, drop, _param):
         """FLAC et WAV → forcer 'copy' désactivé car incompatible avec ces codecs."""
-        # Pas de restriction stricte, juste informatif
         pass
+
+    def _on_choose_folder(self, _btn):
+        """Ouvre un sélecteur de dossier."""
+        dialog = Gtk.FileDialog()
+        dialog.set_title(T["dest_folder"])
+        # Dossier par défaut = dossier du premier fichier source
+        if self._videos:
+            from gi.repository import Gio
+            initial = Gio.File.new_for_path(os.path.dirname(self._videos[0]))
+            dialog.set_initial_folder(initial)
+        dialog.select_folder(self, None, self._on_folder_selected)
+
+    def _on_folder_selected(self, dialog, result):
+        try:
+            folder = dialog.select_folder_finish(result)
+            if folder:
+                self._dest_folder = folder.get_path()
+                # Afficher le nom du dossier (ou chemin court)
+                name = os.path.basename(self._dest_folder) or self._dest_folder
+                self._dest_btn.set_label(name)
+        except Exception:
+            pass
 
     def _on_convert(self, _):
         self._btn_convert.set_sensitive(False)
@@ -307,9 +350,11 @@ class VideoToAudioWindow(Adw.Window):
             if self._cancelled:
                 break
 
-            base, _ = os.path.splitext(video)
-            output  = f"{base}.{ext}"
-            duration = _get_duration(video)
+            src_dir   = os.path.dirname(video)
+            dest_dir  = self._dest_folder if self._dest_folder else src_dir
+            name      = os.path.splitext(os.path.basename(video))[0]
+            output    = os.path.join(dest_dir, f"{name}.{ext}")
+            duration  = _get_duration(video)
 
             cmd = ["ffmpeg", "-y", "-i", video, "-vn", "-progress", "pipe:1",
                    "-nostats"]
