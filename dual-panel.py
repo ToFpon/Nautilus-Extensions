@@ -98,6 +98,7 @@ if _lang.startswith("de"):
         "context_new_file":    "Neue Datei",
         "context_terminal":    "In Terminal öffnen",
         "context_extract_audio": "Audio extrahieren",
+        "context_extract_here": "Hier entpacken",
     }
 
 elif _lang.startswith("fr"):
@@ -152,6 +153,7 @@ elif _lang.startswith("fr"):
         "context_new_file":    "Nouveau fichier",
         "context_terminal":    "Terminal ici",
         "context_extract_audio": "Extraire l'audio",
+        "context_extract_here": "Extraire ici",
     }
 else:
     T = {
@@ -205,6 +207,7 @@ else:
         "context_new_file":    "New file",
         "context_terminal":    "Terminal here",
         "context_extract_audio": "Extract audio",
+        "context_extract_here": "Extract here",
     }
 
 
@@ -218,6 +221,11 @@ else:
 # Extensions vidéo pour Video to Audio
 _VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv",
                ".m4v", ".mpg", ".mpeg", ".3gp", ".ts", ".ogv", ".vob"}
+
+# Extensions d'archive pour Extract Here
+_ARCHIVE_EXTS = {".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz",
+                 ".tgz", ".tbz2", ".txz", ".lz", ".lzma", ".cab",
+                 ".iso", ".dmg", ".wim", ".vhd", ".vhdx", ".001"}
 
 def _video_to_audio_active():
     """Retourne True si video-to-audio.py est dans les extensions."""
@@ -253,6 +261,85 @@ def _launch_video_to_audio(paths):
         _v2a_window_class(paths).present()
     except Exception as e:
         print(f"[dual-panel] Failed to launch video-to-audio: {e}")
+
+
+def _extract_here_active():
+    """Retourne True si extract-here.py est dans les extensions."""
+    return os.path.isfile(os.path.join(
+        os.path.expanduser("~/.local/share/nautilus-python/extensions"),
+        "extract-here.py"))
+
+
+_extract_mod = None  # cache du module extract-here
+
+def _launch_extract_here(paths):
+    """Lance extract-here sur les archives sélectionnées."""
+    global _extract_mod
+    try:
+        if _extract_mod is None:
+            import sys
+            # Chercher dans sys.modules d'abord
+            for mod_name, mod in list(sys.modules.items()):
+                if mod and hasattr(mod, "ExtractHereExtension"):
+                    _extract_mod = mod
+                    break
+            if _extract_mod is None:
+                import importlib.util
+                ext_path = os.path.join(
+                    os.path.expanduser("~/.local/share/nautilus-python/extensions"),
+                    "extract-here.py")
+                spec = importlib.util.spec_from_file_location("extract_here", ext_path)
+                mod  = importlib.util.module_from_spec(spec)
+                sys.modules["extract_here"] = mod
+                spec.loader.exec_module(mod)
+                _extract_mod = mod
+
+        # Reproduire la logique de _on_activate sans passer par Nautilus.FileInfo
+        ExtractDialog         = _extract_mod.ExtractDialog
+        ExtractProgressDialog = _extract_mod.ExtractProgressDialog
+        _detect_volume        = _extract_mod._detect_volume
+        _archive_stem         = _extract_mod._archive_stem
+        _is_encrypted         = _extract_mod._is_encrypted
+
+        # Grouper les volumes
+        seen, groups = set(), []
+        for path in sorted(paths):
+            if path in seen:
+                continue
+            first, parts = _detect_volume(path)
+            for p in parts:
+                seen.add(p)
+            groups.append((first, parts))
+
+        def process_group(index):
+            if index >= len(groups):
+                return
+            first, parts = groups[index]
+            dirpath = os.path.dirname(first)
+            stem    = _archive_stem(first)
+            dst_dir = os.path.join(dirpath, stem)
+            if os.path.exists(dst_dir):
+                dst_dir += "_extracted"
+
+            def do_extract(password=""):
+                prog = ExtractProgressDialog(
+                    first_part=first, dst_dir=dst_dir, password=password,
+                    done_callback=lambda ok, dst: process_group(index + 1),
+                )
+                prog.present()
+
+            if _is_encrypted(first):
+                def on_pwd(password):
+                    if password is None:
+                        return
+                    do_extract(password)
+                ExtractDialog(first, parts, callback=on_pwd).present()
+            else:
+                do_extract()
+
+        process_group(0)
+    except Exception as e:
+        print(f"[dual-panel] Failed to launch extract-here: {e}")
 
 # Vérifier si hidden-dim est actif
 _EXTENSIONS_DIR = os.path.expanduser("~/.local/share/nautilus-python/extensions")
@@ -426,6 +513,8 @@ class FilePanel(Gtk.Box):
         self._sort_model.set_incremental(True)
         self._selection  = Gtk.MultiSelection.new(self._sort_model)
         self._col_view.set_model(self._selection)
+        self._selection.connect("selection-changed",
+                                lambda *_: self._update_action_buttons())
 
         # ── CSS ─────────────────────────────────────────────────────────────
         css = Gtk.CssProvider()
@@ -560,6 +649,20 @@ class FilePanel(Gtk.Box):
         self._move_btn = Gtk.Button(label=T["move"])
         self._move_btn.connect("clicked", self._on_move)
         bar.append(self._move_btn)
+
+        # Bouton Extract Here — visible si archive sélectionnée
+        self._extract_btn = Gtk.Button(icon_name="archive-extract-symbolic")
+        self._extract_btn.set_tooltip_text(T["context_extract_here"])
+        self._extract_btn.connect("clicked", lambda _: self._on_extract_here())
+        self._extract_btn.set_visible(False)
+        bar.append(self._extract_btn)
+
+        # Bouton Video to Audio — visible si vidéo sélectionnée
+        self._v2a_btn = Gtk.Button(icon_name="audio-x-generic-symbolic")
+        self._v2a_btn.set_tooltip_text(T["context_extract_audio"])
+        self._v2a_btn.connect("clicked", lambda _: self._on_extract_audio())
+        self._v2a_btn.set_visible(False)
+        bar.append(self._v2a_btn)
 
         self.append(Gtk.Separator())
         self.append(bar)
@@ -1126,6 +1229,17 @@ class FilePanel(Gtk.Box):
             if all_videos:
                 menu.append(T["context_extract_audio"], "panel.extract-audio")
 
+        # Extraire ici — uniquement si extract-here.py est installé
+        # ET si tous les fichiers sélectionnés sont des archives
+        if selected and _extract_here_active():
+            all_archives = all(
+                not e.is_dir and
+                os.path.splitext(e.path)[1].lower() in _ARCHIVE_EXTS
+                for e in selected
+            )
+            if all_archives:
+                menu.append(T["context_extract_here"], "panel.extract-here")
+
         menu.append(T["context_new_folder"], "panel.new-folder")
         menu.append(T["context_new_file"],   "panel.new-file")
         menu.append(T["context_terminal"],   "panel.terminal")
@@ -1144,6 +1258,7 @@ class FilePanel(Gtk.Box):
             "new-file":     lambda *_: self._on_new_file(None),
             "terminal":     lambda *_: self._open_terminal(None),
             "extract-audio": lambda *_: self._on_extract_audio(),
+            "extract-here":  lambda *_: self._on_extract_here(),
         }
         for name, cb in actions.items():
             a = Gio.SimpleAction.new(name, None)
@@ -1207,6 +1322,41 @@ class FilePanel(Gtk.Box):
                  os.path.splitext(e.path)[1].lower() in _VIDEO_EXTS]
         if paths:
             _launch_video_to_audio(paths)
+
+    def _update_action_buttons(self):
+        """Met à jour la visibilité des boutons selon la sélection."""
+        selected = self.get_selected_entries()
+
+        # Extract Here
+        show_extract = False
+        if selected and _extract_here_active():
+            show_extract = all(
+                not e.is_dir and
+                os.path.splitext(e.path)[1].lower() in _ARCHIVE_EXTS
+                for e in selected
+            )
+        self._extract_btn.set_visible(show_extract)
+
+        # Video to Audio
+        show_v2a = False
+        if selected and _video_to_audio_active():
+            show_v2a = all(
+                not e.is_dir and
+                os.path.splitext(e.path)[1].lower() in _VIDEO_EXTS
+                for e in selected
+            )
+        self._v2a_btn.set_visible(show_v2a)
+
+    def _on_extract_here(self):
+        """Lance extract-here sur les archives sélectionnées."""
+        selected = self.get_selected_entries()
+        paths = [e.path for e in selected
+                 if not e.is_dir and
+                 os.path.splitext(e.path)[1].lower() in _ARCHIVE_EXTS]
+        if paths:
+            _launch_extract_here(paths)
+            # Rafraîchir le panel après extraction
+            GLib.timeout_add(2000, lambda: self.refresh() or False)
 
     # -- Raccourcis clavier --------------------------------------------------
 
