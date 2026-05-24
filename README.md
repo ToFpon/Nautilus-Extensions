@@ -220,6 +220,12 @@ A full-featured dual-panel file manager window launched from Nautilus — with s
 - 📋 **List view** — Name · Size · Modified · Permissions columns with sortable header
 - ⊞ **Grid view** — Large icons (48px) with filename, toggle button in toolbar
 
+**Smart integrations (auto-detected):**
+- 📦 **Extract Here** button + context menu entry — appears only if `extract-here.py` is installed AND all selected files are archives
+- 🎵 **Video to Audio** button + context menu entry — appears only if `video-to-audio.py` is installed AND all selected files are videos
+- 👻 **Hidden file dimming** — auto-applied if `hidden-dim-icon.py` or `hidden-dim-all.py` is installed
+- Buttons appear in the bottom bar (after Move →) to avoid layout shifts in the toolbar
+
 **File operations:**
 - Copy → / ← Copy between panels (with rsync progress bar)
 - Move → / ← Move between panels (with rsync progress bar)
