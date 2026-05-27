@@ -247,7 +247,7 @@ See [LICENSE](LICENSE) or [https://www.gnu.org/licenses/](https://www.gnu.org/li
 
 ## 👤 Author
 
-**Tof** ([@ToFpon](https://github.com/ToFpon)) — Linux sysadmin with ~40 years of IT experience.
+**Tof** ([@ToFpon](https://github.com/ToFpon)) — sysadmin with ~40 years of IT experience.
 
 > 💝 *In memory of Lola — some scripts in this collection bear her name in tribute to a dear sysadmin friend.*
 
