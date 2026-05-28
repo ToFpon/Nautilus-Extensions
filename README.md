@@ -40,7 +40,7 @@ sudo apt install \
   nautilus-hidden-dim-icon
   # (or nautilus-hidden-dim-all instead of -icon)
 
-# You need to logout and login to activate extesions or run in terminal
+# You need to logout and login to activate extensions or run in terminal
 nautilus-extensions-tof-link
 # Restart Nautilus
 nautilus -q
