@@ -42,6 +42,7 @@ sudo apt install \
 
 # Extensions activate at next login — or run this now to enable them immediately:
 nautilus-extensions-tof-link
+
 # Restart Nautilus
 nautilus -q
 ```
