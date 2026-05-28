@@ -251,6 +251,7 @@ See [LICENSE](LICENSE) or [https://www.gnu.org/licenses/](https://www.gnu.org/li
 
 > 💝 *In memory of Lola — some scripts in this collection bear her name in tribute to a dear sysadmin friend.*
 
+> A big thank to ([@Ponce-De-Leon](https://forum.zorin.com/u/Ponce-De-Leon)) for testing
 ---
 
 <p align="center">
