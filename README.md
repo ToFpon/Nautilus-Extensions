@@ -332,7 +332,7 @@ When the corresponding extension is installed, these shortcuts are available glo
 
 | Shortcut | Action | Extension |
 |---|---|---|
-| **F3** | Open / close Dual Panel | `nautilus-dual-panel` |
+| **F3** | Open Dual Panel | `nautilus-dual-panel` |
 | **F4** | Toggle Preview Panel | `nautilus-preview-panel` |
 | **F7** | Open Archive Browser on selection | `nautilus-archive-browser` |
 
