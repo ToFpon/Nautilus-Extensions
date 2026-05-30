@@ -326,6 +326,18 @@ A central hub to manage all the other extensions without manually moving files.
 
 ---
 
+## ⌨️ Keyboard shortcuts
+
+When the corresponding extension is installed, these shortcuts are available globally from Nautilus:
+
+| Shortcut | Action | Extension |
+|---|---|---|
+| **F3** | Open / close Dual Panel | `nautilus-dual-panel` |
+| **F4** | Toggle Preview Panel | `nautilus-preview-panel` |
+| **F7** | Open Archive Browser on selection | `nautilus-archive-browser` |
+
+---
+
 ## 🐛 Reporting issues
 
 Issues and PRs welcome on [GitHub](https://github.com/ToFpon/Nautilus-Extensions/issues).
