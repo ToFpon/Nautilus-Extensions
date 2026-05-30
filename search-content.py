@@ -193,8 +193,21 @@ class SearchWindow(Adw.Window):
         self._btn_clear.add_css_class("flat")
         self._btn_clear.connect("clicked", lambda _: self._clear())
         btns.append(self._btn_clear)
+
+        # Dossier courant (affichage à droite)
+        self._folder_lbl = Gtk.Label()
+        self._folder_lbl.set_markup(
+            f"<small>📁 <tt>{GLib.markup_escape_text(self._folder)}</tt></small>")
+        self._folder_lbl.set_halign(Gtk.Align.START)
+        self._folder_lbl.set_hexpand(True)
+        self._folder_lbl.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self._folder_lbl.set_selectable(True)
+        self._folder_lbl.add_css_class("dim-label")
+        self._folder_lbl.set_margin_start(8)
+        btns.append(self._folder_lbl)
+
         self._status = Gtk.Label(label="")
-        self._status.set_hexpand(True); self._status.set_halign(Gtk.Align.START)
+        self._status.set_halign(Gtk.Align.END)
         self._status.add_css_class("dim-label")
         btns.append(self._status)
         form.append(btns)
@@ -385,11 +398,54 @@ class SearchWindow(Adw.Window):
 
 
 # ---------------------------------------------------------------------------
+# F8 key handler (hooks Nautilus windows via timer)
+# ---------------------------------------------------------------------------
+
+class SearchContentKeyHandler(GObject.GObject):
+    """Capture F8 dans toutes les fenêtres Nautilus via GtkEventControllerKey."""
+    __gtype_name__ = "SearchContentKeyHandler"
+
+    _current_path = None
+
+    def __init__(self):
+        super().__init__()
+        self._hooked = set()
+        GLib.timeout_add(1000, self._hook_windows)
+
+    def _hook_windows(self):
+        app = Gtk.Application.get_default()
+        if app is None:
+            return True
+        for win in app.get_windows():
+            if win in self._hooked:
+                continue
+            self._hooked.add(win)
+            ctrl = Gtk.ShortcutController()
+            ctrl.set_scope(Gtk.ShortcutScope.GLOBAL)
+
+            def on_f8(widget, args):
+                path = (SearchContentKeyHandler._current_path
+                        or os.path.expanduser("~"))
+                SearchWindow(path).present()
+                return True
+
+            trigger = Gtk.ShortcutTrigger.parse_string("F8")
+            action  = Gtk.CallbackAction.new(on_f8)
+            ctrl.add_shortcut(Gtk.Shortcut.new(trigger, action))
+            win.add_controller(ctrl)
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Nautilus Extension
 # ---------------------------------------------------------------------------
 
 class SearchContentExtension(GObject.GObject, Nautilus.MenuProvider):
     __gtype_name__ = "SearchContentExtension"
+
+    def __init__(self):
+        super().__init__()
+        self._key_handler = SearchContentKeyHandler()
 
     def get_file_items(self, files):
         if len(files) != 1: return []
@@ -397,6 +453,7 @@ class SearchContentExtension(GObject.GObject, Nautilus.MenuProvider):
         if f.get_uri_scheme() != "file" or not f.is_directory(): return []
         path = f.get_location().get_path()
         if not path: return []
+        SearchContentKeyHandler._current_path = path
         item = Nautilus.MenuItem(
             name  = "SearchContent::OpenFolder",
             label = T["menu_label"],
@@ -409,6 +466,7 @@ class SearchContentExtension(GObject.GObject, Nautilus.MenuProvider):
     def get_background_items(self, folder):
         path = folder.get_location().get_path() if folder else None
         if not path: return []
+        SearchContentKeyHandler._current_path = path
         item = Nautilus.MenuItem(
             name  = "SearchContent::Open",
             label = T["menu_label"],
