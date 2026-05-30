@@ -335,7 +335,7 @@ When the corresponding extension is installed, these shortcuts are available glo
 | **F3** | Open Dual Panel | `nautilus-dual-panel` |
 | **F4** | Toggle Preview Panel | `nautilus-preview-panel` |
 | **F7** | Open Archive Browser on selection | `nautilus-archive-browser` |
-| **F8** | Open Serch Content in the current directory | `nautilus-search-content` |
+| **F8** | Open Search Content in the current directory | `nautilus-search-content` |
 
 ---
 
