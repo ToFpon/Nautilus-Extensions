@@ -223,6 +223,100 @@ A complete archive manager replacing **file-roller** entirely.
 
 ---
 
+## 📦 Featured: Extract Here
+
+Streamlined archive extraction without opening file-roller.
+
+- Right-click any archive → **Extract here**
+- Supports ZIP, 7z, RAR, TAR, GZ, BZ2, XZ, CAB, ISO and many more
+- **Multi-volume 7z** (`.001`, `.002`...) and **multi-volume RAR**
+- Password-protected archive detection with prompt
+- Real-time extraction progress dialog
+- Auto-detection of single-file vs folder archives
+
+---
+
+## 🎨 Featured: Annotate Image
+
+A lightweight image annotation tool — no need to open GIMP for quick marks.
+
+- Right-click any PNG/JPG → **Annotate**
+- Draw arrows, rectangles, ellipses, lines, freehand
+- Add text annotations with custom font and size
+- Color picker with theme integration
+- Adjustable stroke width
+- Undo/redo
+- Save in place or as new file
+
+---
+
+## 📄 PDF tools
+
+Three complementary tools for everyday PDF tasks, all powered by Ghostscript or pypdf.
+
+### 🗜️ Compress PDF
+- 4 quality presets (screen, ebook, printer, prepress)
+- Real-time size comparison (before/after)
+- Batch compression
+- OCR preprocessing with deskew + erosion/dilation (via ImageMagick + Tesseract)
+
+### 🔗 Merge PDF
+- Multi-file selection from Nautilus
+- Drag-and-drop reordering
+- Per-file page selection
+- Output filename customization
+
+### 🔏 Watermark PDF
+- Text watermark with custom font, size, color and opacity
+- Image watermark from file
+- Position options (center, corners, tiled)
+- Rotation angle adjustment
+- Per-page or all-pages application
+- Output flattening for security
+
+---
+
+## 🔍 Featured: Preview Panel
+
+A dynamic side preview for selected files — see before you open.
+
+- Image previews (PNG, JPG, WEBP, AVIF, etc.)
+- Video thumbnails via `ffmpegthumbnailer`
+- PDF first page preview
+- Text file content preview
+- Toggle via context menu
+
+---
+
+## 👁️ Featured: Hidden File Dimming
+
+Two complementary extensions (install only **one**) to reduce visual clutter when "Show hidden files" is enabled in Nautilus.
+
+| Variant | Effect |
+|---|---|
+| `nautilus-hidden-dim-icon` | Dim only the icon |
+| `nautilus-hidden-dim-all` | Dim both icon and label |
+
+Both share the same engine:
+- Event-driven via `GFileMonitor` for instant updates
+- Lightweight — minimal CPU usage
+- Smart guard against redundant opacity changes
+- Auto-detected by Dual Panel for consistent display
+
+---
+
+## ⚙️ Featured: Extensions Manager
+
+A central hub to manage all the other extensions without manually moving files.
+
+- List all installed extensions (active and disabled)
+- Enable/disable each extension with a single click
+- Auto-resize window based on extension count
+- Restart Nautilus button to apply changes instantly
+- Respected by `nautilus-extensions-tof-link` — disabled extensions stay disabled across reboots
+
+---
+
 ## 🛠️ Hidden gems
 
 - **`nautilus-cut-dim`** — visually dims items cut with `Ctrl+X` so you don't forget what's in the clipboard
