@@ -65,7 +65,7 @@ nautilus -q
 | 🔏 **Watermark PDF** | `nautilus-watermark-pdf` | Secure watermarking with flattening |
 | 🔍 **Preview Panel** | `nautilus-preview-panel` | Dynamic file preview panel |
 | 📦 **Deb Installer** | `nautilus-deb-installer` | Visual `.deb` installer with real-time output |
-| 🔎 **Search Content** | `nautilus-search-content` | Real text search using grep/ripgrep |
+| 🔎 **Search & Replace** | `nautilus-search-content` | Real text search & replace using grep/ripgrep |
 | 🎵 **Video to Audio** | `nautilus-video-to-audio` | Extract audio from videos (MP3, M4A, OGG, OPUS, FLAC, WAV) |
 | ⏱️ **Duration Column** | `nautilus-duration-column` | Duration column for audio/video files |
 | ✂️ **Cut Item Dimmer** | `nautilus-cut-dim` | Visual dimming of cut (Ctrl+X) files |
@@ -166,10 +166,11 @@ A complete dual-pane file manager living inside Nautilus, launched with **F3** o
 
 ---
 
-## 🔍 Featured: Search Content
+## 🔍 Featured: Search & Replace
 
-A reliable text content search — much more dependable than Nautilus' built-in search which relies on Tracker3 indexing.
+A reliable text content search **and replace** — much more dependable than Nautilus' built-in search which relies on Tracker3 indexing. Two native tabs:
 
+**🔎 Search tab**
 - Uses **grep** (always available) or **ripgrep** for speed (if installed)
 - Filterable by file extensions (`py,txt,md`, etc.)
 - Recursive or current folder only
@@ -177,6 +178,16 @@ A reliable text content search — much more dependable than Nautilus' built-in 
 - Skips binary files and heavy folders (`.git`, `node_modules`, `__pycache__`)
 - Threaded search — UI stays responsive
 - Double-click to open file, right-click for context menu
+
+**🔁 Search & Replace tab**
+- **Live preview** of every change: old text struck through in red → new text in green
+- **Per-line checkboxes** — select exactly which occurrences to replace (master check-all in header)
+- **Confirmation dialog** before writing, showing the number of affected files
+- **Automatic `.bak` backup** of each modified file
+- Line-precise replacement (only checked lines are touched)
+- Native toast confirmation after applying
+- Current folder shown in both tabs
+- Launchable anywhere with **F8**
 
 ```bash
 # Optional: faster search with ripgrep
