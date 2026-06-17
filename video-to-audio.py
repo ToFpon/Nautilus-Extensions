@@ -35,7 +35,7 @@ import gi
 gi.require_version("Gtk",     "4.0")
 gi.require_version("Adw",     "1")
 gi.require_version("Nautilus","4.0")
-from gi.repository import GObject, Gtk, Adw, GLib, Pango, Nautilus
+from gi.repository import GObject, Gtk, Adw, GLib, Pango, Gdk, Nautilus
 
 # ---------------------------------------------------------------------------
 # i18n
@@ -46,8 +46,8 @@ if _lang.startswith("fr"):
     T = {
         "menu_label":   "Extraire l'audio",
         "title":        "Extraction audio",
-        "format":       "Format de sortie :",
-        "quality":      "Qualité :",
+        "format":       "Format",
+        "quality":      "Qualité",
         "quality_high": "Haute (320 kbps)",
         "quality_med":  "Moyenne (192 kbps)",
         "quality_low":  "Basse (128 kbps)",
@@ -61,7 +61,7 @@ if _lang.startswith("fr"):
         "all_done":     "Extraction terminée — {ok} sur {total} réussie(s).",
         "cancelled":    "Extraction annulée.",
         "overwrite":    "Le fichier existe déjà — il sera écrasé.",
-        "dest_folder":  "Dossier de destination :",
+        "dest_folder":  "Destination",
         "choose":       "Choisir…",
         "same_as_src":  "Même dossier que la source",
     }
@@ -69,8 +69,8 @@ elif _lang.startswith("de"):
     T = {
         "menu_label":   "Audio extrahieren",
         "title":        "Audio-Extraktion",
-        "format":       "Ausgabeformat:",
-        "quality":      "Qualität:",
+        "format":       "Format",
+        "quality":      "Qualität",
         "quality_high": "Hoch (320 kbps)",
         "quality_med":  "Mittel (192 kbps)",
         "quality_low":  "Niedrig (128 kbps)",
@@ -84,7 +84,7 @@ elif _lang.startswith("de"):
         "all_done":     "Extraktion abgeschlossen — {ok} von {total} erfolgreich.",
         "cancelled":    "Extraktion abgebrochen.",
         "overwrite":    "Datei existiert bereits — wird überschrieben.",
-        "dest_folder":  "Zielordner:",
+        "dest_folder":  "Ziel",
         "choose":       "Wählen…",
         "same_as_src":  "Gleicher Ordner wie Quelle",
     }
@@ -92,8 +92,8 @@ else:
     T = {
         "menu_label":   "Extract audio",
         "title":        "Audio Extraction",
-        "format":       "Output format:",
-        "quality":      "Quality:",
+        "format":       "Format",
+        "quality":      "Quality",
         "quality_high": "High (320 kbps)",
         "quality_med":  "Medium (192 kbps)",
         "quality_low":  "Low (128 kbps)",
@@ -107,7 +107,7 @@ else:
         "all_done":     "Extraction complete — {ok} of {total} succeeded.",
         "cancelled":    "Extraction cancelled.",
         "overwrite":    "File already exists — will be overwritten.",
-        "dest_folder":  "Destination folder:",
+        "dest_folder":  "Destination",
         "choose":       "Choose…",
         "same_as_src":  "Same folder as source",
     }
@@ -157,6 +157,62 @@ def _parse_time(time_str):
 
 
 # ---------------------------------------------------------------------------
+# CSS (option cards) — installé une seule fois
+# ---------------------------------------------------------------------------
+_CSS_INSTALLED = False
+
+_CSS = b"""
+.v2a-card {
+    border: 1px solid @borders;
+    border-radius: 11px;
+    padding: 7px 10px 9px 12px;
+    background-color: alpha(@window_fg_color, 0.025);
+}
+.v2a-card > label {
+    font-size: 0.80em;
+    opacity: 0.65;
+    margin-bottom: 1px;
+}
+.v2a-card dropdown,
+.v2a-card button.v2a-flat {
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    min-height: 30px;
+    padding: 2px 4px;
+    font-weight: 600;
+}
+.v2a-card dropdown:hover,
+.v2a-card button.v2a-flat:hover {
+    background-color: alpha(@window_fg_color, 0.07);
+    border-radius: 7px;
+}
+.v2a-card button.v2a-flat {
+    padding-left: 2px;
+}
+"""
+
+def _install_css():
+    global _CSS_INSTALLED
+    if _CSS_INSTALLED:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        try:
+            provider.load_from_data(_CSS)
+        except TypeError:
+            provider.load_from_data(_CSS.decode("utf-8"), -1)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        _CSS_INSTALLED = True
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Window
 # ---------------------------------------------------------------------------
 
@@ -165,6 +221,7 @@ class VideoToAudioWindow(Adw.Window):
 
     def __init__(self, video_files):
         super().__init__(title=T["title"])
+        _install_css()
         self.set_default_size(560, 480)
         self.set_resizable(True)
         self.set_transient_for(_nautilus_window())
@@ -181,51 +238,56 @@ class VideoToAudioWindow(Adw.Window):
 
         main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # ── Options ───────────────────────────────────────────────────────────
-        opts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        # ── Options (3 colonnes alignées) ─────────────────────────────────────
+        opts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         opts.set_margin_start(16); opts.set_margin_end(16)
-        opts.set_margin_top(12); opts.set_margin_bottom(8)
+        opts.set_margin_top(14); opts.set_margin_bottom(10)
+        opts.set_homogeneous(True)
+
+        def _opt_col(label_text):
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            col.set_hexpand(True)
+            col.add_css_class("v2a-card")
+            lbl = Gtk.Label(label=label_text)
+            lbl.set_halign(Gtk.Align.START)
+            col.append(lbl)
+            return col
 
         # Format
-        fmt_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        fmt_lbl = Gtk.Label(label=T["format"])
-        fmt_lbl.set_halign(Gtk.Align.START)
-        fmt_lbl.set_size_request(120, -1)
-        fmt_row.append(fmt_lbl)
+        self._dest_folder = None  # None = même dossier que la source
+        fmt_col = _opt_col(T["format"])
         self._fmt_drop = Gtk.DropDown.new_from_strings(
             [f[0].upper() for f in AUDIO_FORMATS])
         self._fmt_drop.set_selected(0)  # mp3 par défaut
         self._fmt_drop.set_hexpand(True)
         self._fmt_drop.connect("notify::selected", self._on_fmt_changed)
-        fmt_row.append(self._fmt_drop)
-        opts.append(fmt_row)
+        fmt_col.append(self._fmt_drop)
+        opts.append(fmt_col)
 
         # Qualité
-        qual_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        qual_lbl = Gtk.Label(label=T["quality"])
-        qual_lbl.set_halign(Gtk.Align.START)
-        qual_lbl.set_size_request(120, -1)
-        qual_row.append(qual_lbl)
+        qual_col = _opt_col(T["quality"])
         self._qual_drop = Gtk.DropDown.new_from_strings([
             T["quality_high"], T["quality_med"], T["quality_low"], T["quality_copy"]
         ])
         self._qual_drop.set_selected(0)
         self._qual_drop.set_hexpand(True)
-        qual_row.append(self._qual_drop)
-        opts.append(qual_row)
+        qual_col.append(self._qual_drop)
+        opts.append(qual_col)
 
         # Dossier de destination
-        self._dest_folder = None  # None = même dossier que la source
-        dest_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        dest_lbl = Gtk.Label(label=T["dest_folder"])
-        dest_lbl.set_halign(Gtk.Align.START)
-        dest_lbl.set_size_request(120, -1)
-        dest_row.append(dest_lbl)
+        dest_col = _opt_col(T["dest_folder"])
         self._dest_btn = Gtk.Button(label=T["same_as_src"])
         self._dest_btn.set_hexpand(True)
+        self._dest_btn.add_css_class("v2a-flat")
+        self._dest_btn.set_halign(Gtk.Align.FILL)
+        child = self._dest_btn.get_child()
+        if isinstance(child, Gtk.Label):
+            child.set_halign(Gtk.Align.START)
+            child.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            child.set_max_width_chars(14)
         self._dest_btn.connect("clicked", self._on_choose_folder)
-        dest_row.append(self._dest_btn)
-        opts.append(dest_row)
+        dest_col.append(self._dest_btn)
+        opts.append(dest_col)
 
         main.append(opts)
         main.append(Gtk.Separator())
