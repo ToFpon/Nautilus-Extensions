@@ -10,6 +10,9 @@
 ![PPA](https://img.shields.io/badge/PPA-launchpad-E95420?style=flat-square&logo=ubuntu&logoColor=white)
 
 ---
+[Visit Online Nautilus Extensions](https://tofmicro.pages-perso.free.fr/)  
+
+<img width="1146" height="780" alt="output-smallpngtools" src="https://github.com/user-attachments/assets/0fd65ff2-4a75-462f-93f0-310ca76ebacf" />
 
 ## 🚀 Quick install via PPA (Ubuntu / Zorin OS / Mint)
 
