@@ -12,7 +12,7 @@
 ---
 [Visit Online Nautilus Extensions](https://tofmicro.pages-perso.free.fr/)  
 
-<img width="1146" height="780" alt="output-smallpngtools" src="https://github.com/ToFpon/Nautilus-Extensions/blob/main/website.png" />
+<img width="1153" height="781" alt="website" src="https://github.com/ToFpon/Nautilus-Extensions/blob/main/website.png" />
 
 ## 🚀 Quick install via PPA (Ubuntu / Zorin OS / Mint)
 
