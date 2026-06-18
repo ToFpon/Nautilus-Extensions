@@ -63,6 +63,27 @@ if _lang.startswith("fr"):
         "saved":        "Image enregistrée.",
         "postpend":     "-annoté",
     }
+elif _lang.startswith("de"):
+    T = {
+        "menu_label":   "Bild bearbeiten…",
+        "title":        "Bild bearbeiten",
+        "tool_rect":    "Rechteck",
+        "tool_ellipse": "Kreis",
+        "tool_arrow":   "Pfeil",
+        "tool_text":    "Text",
+        "undo":         "Rückgängig machen",
+        "redo":         "Wiederherstellen",
+        "save":         "Speichern",
+        "save_as":      "Speichern unter…",
+        "thickness":    "Strichstärke",
+        "opacity":      "Deckkraft",
+        "color":        "Farbe",
+        "text_prompt":  "Text eingeben",
+        "text_ok":      "OK",
+        "text_cancel":  "Abbrechen",
+        "saved":        "Bild gespeichert",
+        "postpend":     "-bearbeitet",
+    }
 else:
     T = {
         "menu_label":   "Annotate image…",
