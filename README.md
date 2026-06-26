@@ -260,6 +260,7 @@ A lightweight image annotation tool — no need to open GIMP for quick marks.
 - Color picker with theme integration
 - Adjustable stroke width
 - Undo/redo
+- Zoom controls (buttons, Ctrl+wheel, fit / actual size)
 - Save in place or as new file
 
 ---
