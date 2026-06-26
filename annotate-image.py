@@ -62,6 +62,10 @@ if _lang.startswith("fr"):
         "text_cancel":  "Annuler",
         "saved":        "Image enregistrée.",
         "postpend":     "-annoté",
+        "zoom_in":      "Zoom avant",
+        "zoom_out":     "Zoom arrière",
+        "zoom_fit":     "Ajuster à la fenêtre",
+        "zoom_reset":   "Taille réelle (100%)",
     }
 elif _lang.startswith("de"):
     T = {
@@ -83,6 +87,10 @@ elif _lang.startswith("de"):
         "text_cancel":  "Abbrechen",
         "saved":        "Bild gespeichert",
         "postpend":     "-bearbeitet",
+        "zoom_in":      "Vergrößern",
+        "zoom_out":     "Verkleinern",
+        "zoom_fit":     "An Fenster anpassen",
+        "zoom_reset":   "Originalgröße (100%)",
     }
 else:
     T = {
@@ -104,6 +112,10 @@ else:
         "text_cancel":  "Cancel",
         "saved":        "Image saved.",
         "postpend":     "-annotated",
+        "zoom_in":      "Zoom in",
+        "zoom_out":     "Zoom out",
+        "zoom_fit":     "Fit to window",
+        "zoom_reset":   "Actual size (100%)",
     }
 
 TOOLS = ["rect", "ellipse", "arrow", "text"]
@@ -206,7 +218,8 @@ class AnnotatorWindow(Adw.Window):
     def __init__(self, image_path: str):
         super().__init__(title=T["title"])
         self.set_default_size(1100, 750)
-        self.set_transient_for(_nautilus_window())
+        # Pas de transient_for : fenêtre indépendante → boutons Réduire/Agrandir
+        # disponibles (Mutter masque min/max sur les fenêtres-dialogues).
 
         self._path         = image_path
         self._annotations  = []
@@ -219,6 +232,7 @@ class AnnotatorWindow(Adw.Window):
         self._drag_start_w = (0.0, 0.0)  # widget coords du début du drag
         self._current_ann  = None
         self._scale        = 1.0
+        self._zoom         = None   # None = ajusté à la fenêtre ; sinon facteur manuel
         self._offset_x     = 0.0
         self._offset_y     = 0.0
 
@@ -235,6 +249,9 @@ class AnnotatorWindow(Adw.Window):
 
         # HeaderBar
         header = Adw.HeaderBar()
+        # Forcer l'affichage des boutons Réduire / Agrandir / Fermer
+        # (par défaut GNOME n'affiche que Fermer)
+        header.set_decoration_layout(":minimize,maximize,close")
 
         undo_btn = Gtk.Button(icon_name="edit-undo-symbolic")
         undo_btn.set_tooltip_text(T["undo"])
@@ -315,6 +332,34 @@ class AnnotatorWindow(Adw.Window):
             lambda s: setattr(self, "_opacity", s.get_value()))
         tb.append(self._op_scale)
 
+        # Zoom (poussé à droite)
+        tb.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        tb.append(spacer)
+
+        zoom_out_btn = Gtk.Button(icon_name="zoom-out-symbolic")
+        zoom_out_btn.set_tooltip_text(T["zoom_out"])
+        zoom_out_btn.connect("clicked", lambda _: self._zoom_step(1/1.25))
+        tb.append(zoom_out_btn)
+
+        self._zoom_lbl = Gtk.Button(label="100%")
+        self._zoom_lbl.set_tooltip_text(T["zoom_reset"])
+        self._zoom_lbl.add_css_class("flat")
+        self._zoom_lbl.set_size_request(60, -1)
+        self._zoom_lbl.connect("clicked", lambda _: self._set_zoom(1.0))
+        tb.append(self._zoom_lbl)
+
+        zoom_in_btn = Gtk.Button(icon_name="zoom-in-symbolic")
+        zoom_in_btn.set_tooltip_text(T["zoom_in"])
+        zoom_in_btn.connect("clicked", lambda _: self._zoom_step(1.25))
+        tb.append(zoom_in_btn)
+
+        zoom_fit_btn = Gtk.Button(icon_name="zoom-fit-best-symbolic")
+        zoom_fit_btn.set_tooltip_text(T["zoom_fit"])
+        zoom_fit_btn.connect("clicked", lambda _: self._set_zoom(None))
+        tb.append(zoom_fit_btn)
+
         tv.add_top_bar(tb)
 
         # Canvas
@@ -334,6 +379,15 @@ class AnnotatorWindow(Adw.Window):
         drag.connect("drag-end",    self._drag_end)
         self._canvas.add_controller(drag)
 
+        # Zoom à la molette (Ctrl + molette)
+        scroll_ctrl = Gtk.EventControllerScroll.new(
+            Gtk.EventControllerScrollFlags.VERTICAL)
+        scroll_ctrl.connect("scroll", self._on_scroll)
+        self._canvas.add_controller(scroll_ctrl)
+
+        # Réajuster en mode "fit" quand le canvas change de taille
+        self._canvas.connect("resize", self._on_canvas_resize)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
         scroll.set_hexpand(True)
@@ -343,23 +397,68 @@ class AnnotatorWindow(Adw.Window):
         self.set_content(tv)
         self.connect("map", self._on_map)
 
-    # -- Map / scale ---------------------------------------------------------
+    # -- Map / scale / zoom --------------------------------------------------
 
     def _on_map(self, *_):
-        self._recalc_scale()
-        self._canvas.set_content_width(int(self._img_w * self._scale + 40))
-        self._canvas.set_content_height(int(self._img_h * self._scale + 40))
+        self._apply_scale()
+        self._update_canvas_size()
+        self._update_zoom_label()
 
-    def _recalc_scale(self):
-        cw = self._canvas.get_width()  or (self.get_width()  - 20)
-        ch = self._canvas.get_height() or (self.get_height() - 130)
-        if cw > 0 and ch > 0:
-            self._scale = min(cw / self._img_w, ch / self._img_h, 2.0)
+    def _on_canvas_resize(self, area, w, h):
+        # En mode "ajusté", recalculer l'échelle au redimensionnement
+        if self._zoom is None:
+            self._apply_scale()
+            self._update_zoom_label()
+            self._canvas.queue_draw()
+
+    def _apply_scale(self):
+        """Calcule self._scale selon le mode (fit auto ou zoom manuel)."""
+        if self._zoom is None:
+            cw = self._canvas.get_width()  or (self.get_width()  - 20)
+            ch = self._canvas.get_height() or (self.get_height() - 130)
+            if cw > 0 and ch > 0:
+                self._scale = min(cw / self._img_w, ch / self._img_h, 2.0)
+        else:
+            self._scale = self._zoom
+
+    def _update_canvas_size(self):
+        if self._zoom is None:
+            # laisser le canvas remplir la zone visible (pas de scrollbars)
+            self._canvas.set_content_width(0)
+            self._canvas.set_content_height(0)
+        else:
+            self._canvas.set_content_width(int(self._img_w * self._scale + 40))
+            self._canvas.set_content_height(int(self._img_h * self._scale + 40))
+
+    def _update_zoom_label(self):
+        if hasattr(self, "_zoom_lbl"):
+            self._zoom_lbl.set_label(f"{int(round(self._scale * 100))}%")
+
+    def _set_zoom(self, zoom):
+        """zoom = None (ajuster) ou facteur manuel (1.0 = 100%)."""
+        self._zoom = zoom
+        self._apply_scale()
+        self._update_canvas_size()
+        self._update_zoom_label()
+        self._canvas.queue_draw()
+
+    def _zoom_step(self, factor):
+        base = self._scale if self._scale > 0 else 1.0
+        new_zoom = max(0.1, min(8.0, base * factor))
+        self._set_zoom(new_zoom)
+
+    def _on_scroll(self, ctrl, dx, dy):
+        ev = ctrl.get_current_event()
+        state = ev.get_modifier_state() if ev else 0
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            self._zoom_step(1/1.25 if dy > 0 else 1.25)
+            return True
+        return False
 
     # -- Draw ----------------------------------------------------------------
 
     def _on_draw(self, area, ctx, w, h):
-        self._recalc_scale()
+        self._apply_scale()
         s  = self._scale
         ox = (w - self._img_w * s) / 2
         oy = (h - self._img_h * s) / 2
@@ -543,6 +642,8 @@ class AnnotatorWindow(Adw.Window):
 class AnnotateImageExtension(GObject.GObject, Nautilus.MenuProvider):
     __gtype_name__ = "AnnotateImageExtension"
 
+    _windows = []  # garde une référence aux fenêtres ouvertes
+
     def get_file_items(self, files):
         pngs = [
             f for f in files
@@ -564,4 +665,10 @@ class AnnotateImageExtension(GObject.GObject, Nautilus.MenuProvider):
         return []
 
     def _on_activate(self, _item, nfile):
-        AnnotatorWindow(nfile.get_location().get_path()).present()
+        win = AnnotatorWindow(nfile.get_location().get_path())
+        AnnotateImageExtension._windows.append(win)
+        win.connect("close-request",
+                    lambda w: (AnnotateImageExtension._windows.remove(w)
+                               if w in AnnotateImageExtension._windows else None,
+                               False)[1])
+        win.present()
