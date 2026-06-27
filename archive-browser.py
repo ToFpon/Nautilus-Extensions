@@ -65,6 +65,8 @@ if _lang.startswith("fr"):
         # Extraction
         "extract_all":         "Tout extraire",
         "extract_sel":         "Extraire la sélection",
+        "col_name":            "Nom",
+        "col_size":            "Taille",
         # Mot de passe
         "pwd_title":           "Archive protégée",
         "pwd_body":            "Cette archive est chiffrée. Entrez le mot de passe :",
@@ -106,6 +108,8 @@ elif _lang.startswith("de"):
         # Extraction
         "extract_all":         "Alles entpacken",
         "extract_sel":         "Auswahl entpacken",
+        "col_name":            "Name",
+        "col_size":            "Größe",
         # Mot de passe
         "pwd_title":           "Geschütztes Archiv",
         "pwd_body":            "Dieses Archiv ist verschlüsselt. Passwort eingeben:",
@@ -147,6 +151,8 @@ else:
         # Extraction
         "extract_all":         "Extract all",
         "extract_sel":         "Extract selection",
+        "col_name":            "Name",
+        "col_size":            "Size",
         # Password
         "pwd_title":           "Protected archive",
         "pwd_body":            "This archive is encrypted. Enter the password:",
@@ -493,6 +499,7 @@ class FilePanel(Gtk.Box):
 
         # Header
         hbar = Gtk.Box(spacing=4)
+        hbar.add_css_class("ab-toolbar")
         hbar.set_margin_start(4); hbar.set_margin_end(4)
         hbar.set_margin_top(4);   hbar.set_margin_bottom(4)
 
@@ -501,6 +508,7 @@ class FilePanel(Gtk.Box):
         up_btn.connect("clicked", lambda _: self.navigate(os.path.dirname(self._path)))
 
         self._path_entry = Gtk.Entry()
+        self._path_entry.add_css_class("ab-path")
         self._path_entry.set_hexpand(True)
         self._path_entry.connect("activate", self._on_path_activate)
 
@@ -525,6 +533,19 @@ class FilePanel(Gtk.Box):
         self.append(hbar)
         self.append(Gtk.Separator())
 
+        # En-tête de colonnes (Nom / Taille) façon Nautilus
+        fp_hdr = Gtk.Box(spacing=6)
+        fp_hdr.add_css_class("ab-colhdr")
+        fp_name_h = Gtk.Label(label=T["col_name"])
+        fp_name_h.set_halign(Gtk.Align.START); fp_name_h.set_hexpand(True)
+        fp_name_h.set_margin_start(32)
+        fp_size_h = Gtk.Label(label=T["col_size"])
+        fp_size_h.set_halign(Gtk.Align.END); fp_size_h.set_width_chars(9)
+        fp_size_h.set_margin_end(10)
+        fp_hdr.append(fp_name_h); fp_hdr.append(fp_size_h)
+        self.append(fp_hdr)
+        self.append(Gtk.Separator())
+
         # Store + ListView
         self._store = Gio.ListStore(item_type=FSEntry)
         self._sel   = Gtk.MultiSelection.new(self._store)
@@ -535,7 +556,7 @@ class FilePanel(Gtk.Box):
 
         self._lv = Gtk.ListView(model=self._sel, factory=fct)
         self._lv.set_vexpand(True)
-        self._lv.add_css_class("navigation-sidebar")
+        self._lv.add_css_class("ab-list")
         self._lv.connect("activate", self._on_activate)
 
 
@@ -546,7 +567,7 @@ class FilePanel(Gtk.Box):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
-        scroll.set_overlay_scrolling(False)
+        scroll.set_overlay_scrolling(True)
         scroll.set_child(self._lv)
         self.append(scroll)
 
@@ -628,7 +649,7 @@ class FilePanel(Gtk.Box):
     def _setup(self, fct, item):
         box  = Gtk.Box(spacing=6)
         box.set_margin_start(4); box.set_margin_end(4)
-        box.set_margin_top(2);   box.set_margin_bottom(2)
+        box.set_margin_top(5);   box.set_margin_bottom(5)
         icon = Gtk.Image(); icon.set_pixel_size(16)
         lbl  = Gtk.Label(); lbl.set_halign(Gtk.Align.START)
         lbl.set_hexpand(True); lbl.set_ellipsize(Pango.EllipsizeMode.END)
@@ -710,9 +731,22 @@ class ArchiveBrowserWindow(Adw.Window):
         # Recherche
         self._search = Gtk.SearchEntry()
         self._search.set_placeholder_text(T["filter"])
+        self._search.add_css_class("ab-search")
         self._search.set_margin_start(8); self._search.set_margin_end(8)
-        self._search.set_margin_top(6);   self._search.set_margin_bottom(6)
+        self._search.set_margin_top(4);   self._search.set_margin_bottom(4)
         self._search.connect("search-changed", self._on_search)
+
+        # En-tête de colonnes (Nom / Taille) façon Nautilus
+        arch_hdr = Gtk.Box(spacing=6)
+        arch_hdr.add_css_class("ab-colhdr")
+        arch_name_h = Gtk.Label(label=T["col_name"])
+        arch_name_h.set_halign(Gtk.Align.START); arch_name_h.set_hexpand(True)
+        arch_name_h.set_margin_start(32)
+        arch_size_h = Gtk.Label(label=T["col_size"])
+        arch_size_h.set_halign(Gtk.Align.END); arch_size_h.set_width_chars(10)
+        arch_size_h.set_margin_end(10)
+        arch_hdr.append(arch_name_h); arch_hdr.append(arch_size_h)
+        self._arch_hdr = arch_hdr
 
         # Store + ListView
         self._store = Gio.ListStore(item_type=Entry)
@@ -724,7 +758,7 @@ class ArchiveBrowserWindow(Adw.Window):
 
         self._lv = Gtk.ListView(model=self._sel, factory=fct)
         self._lv.set_vexpand(True)
-        self._lv.add_css_class("navigation-sidebar")
+        self._lv.add_css_class("ab-list")
         self._lv.connect("activate", self._on_activate)
 
         # On évite un GestureClick global avec calcul d'index via "y":
@@ -744,7 +778,7 @@ class ArchiveBrowserWindow(Adw.Window):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
-        scroll.set_overlay_scrolling(False)
+        scroll.set_overlay_scrolling(True)
         scroll.set_child(self._lv)
 
         # Boutons bas
@@ -765,6 +799,8 @@ class ArchiveBrowserWindow(Adw.Window):
         # Layout panneau gauche
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content.append(self._search)
+        content.append(Gtk.Separator())
+        content.append(self._arch_hdr)
         content.append(Gtk.Separator())
         content.append(scroll)
         content.append(Gtk.Separator())
@@ -796,10 +832,52 @@ class ArchiveBrowserWindow(Adw.Window):
 
         tv.set_content(main)
         self.set_content(tv)
+        self.add_css_class("archive-browser")
 
-        # CSS
+        # CSS (scopé sous .archive-browser pour ne pas polluer les autres apps)
         css = Gtk.CssProvider()
-        css.load_from_data(b".bold { font-weight: bold; }")
+        _css = b"""
+.bold { font-weight: 700; }
+.archive-browser .ab-colhdr {
+    padding: 7px 0 6px 0;
+}
+.archive-browser .ab-colhdr label {
+    font-size: 0.80em;
+    font-weight: 600;
+    opacity: 0.55;
+}
+.archive-browser .ab-list {
+    background: transparent;
+    padding: 0;
+}
+.archive-browser .ab-list > row {
+    border-radius: 8px;
+    margin: 1px 6px;
+    padding: 0;
+}
+.archive-browser .ab-list > row:hover {
+    background-color: alpha(@window_fg_color, 0.05);
+}
+.archive-browser .ab-list > row:selected {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+.archive-browser .ab-path {
+    border-radius: 9px;
+    min-height: 34px;
+}
+.archive-browser .ab-search {
+    border-radius: 9px;
+    min-height: 34px;
+}
+.archive-browser .ab-toolbar {
+    padding: 0;
+}
+"""
+        try:
+            css.load_from_data(_css)
+        except TypeError:
+            css.load_from_data(_css.decode("utf-8"), -1)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -938,7 +1016,7 @@ class ArchiveBrowserWindow(Adw.Window):
     def _setup(self, fct, item):
         box  = Gtk.Box(spacing=6)
         box.set_margin_start(4); box.set_margin_end(4)
-        box.set_margin_top(2);   box.set_margin_bottom(2)
+        box.set_margin_top(5);   box.set_margin_bottom(5)
         icon = Gtk.Image(); icon.set_pixel_size(16)
         name = Gtk.Label(); name.set_halign(Gtk.Align.START)
         name.set_hexpand(True); name.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
