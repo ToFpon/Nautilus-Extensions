@@ -306,16 +306,27 @@ class SearchWindow(Adw.Window):
         self._btn_clear.connect("clicked", lambda _: self._clear())
         btns.append(self._btn_clear)
 
+        folder_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        folder_box.set_halign(Gtk.Align.START)
+        folder_box.set_hexpand(True)
+        folder_box.set_margin_start(8)
+
+        folder_icon = Gtk.Image.new_from_icon_name("folder-saved-search")
+        folder_icon.set_pixel_size(16)
+        folder_icon.add_css_class("dim-label")
+        folder_box.append(folder_icon)
+
         self._folder_lbl = Gtk.Label()
         self._folder_lbl.set_markup(
-            f"<small>📁 <tt>{GLib.markup_escape_text(self._folder)}</tt></small>")
+            f"<small><tt>{GLib.markup_escape_text(self._folder)}</tt></small>")
         self._folder_lbl.set_halign(Gtk.Align.START)
         self._folder_lbl.set_hexpand(True)
         self._folder_lbl.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
         self._folder_lbl.set_selectable(True)
         self._folder_lbl.add_css_class("dim-label")
-        self._folder_lbl.set_margin_start(8)
-        btns.append(self._folder_lbl)
+        folder_box.append(self._folder_lbl)
+
+        btns.append(folder_box)
 
         self._status = Gtk.Label(label="")
         self._status.set_halign(Gtk.Align.END)
