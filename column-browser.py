@@ -147,6 +147,7 @@ class FileEntry(GObject.Object):
 MILLER_COLUMN_WIDTH_DEFAULT = 220
 MILLER_COLUMN_MIN_WIDTH     = 120
 MILLER_COLUMN_MAX_WIDTH     = 640
+MILLER_WINDOW_MIN_WIDTH     = 640   # jamais plus étroit qu'~2-3 colonnes, même à 1 seule colonne ouverte
 
 
 class MillerColumn(Gtk.Box):
@@ -382,16 +383,18 @@ class MillerColumnsView(Gtk.ScrolledWindow):
         self._truncate_after(column)
         if entry is None:
             self._owner._path_changed(column.dir_path)
+            self._owner._sync_window_width(self._needed_width())
         elif entry.is_dir:
             self._append_column(entry.path)
             self._owner._path_changed(entry.path)
-            # 1) on essaie d'élargir la fenêtre pour montrer la colonne en
+            # 1) on ajuste la largeur de fenêtre pour montrer la colonne en
             #    entier sans scroll ; 2) si l'écran est trop petit pour ça,
             #    le scroll reste le filet de sécurité.
-            self._owner._miller_grew(self._needed_width())
+            self._owner._sync_window_width(self._needed_width())
             GLib.idle_add(self._scroll_to_end)
         else:
             self._owner._path_changed(column.dir_path)
+            self._owner._sync_window_width(self._needed_width())
             try:
                 Gio.AppInfo.launch_default_for_uri(f"file://{entry.path}", None)
             except Exception:
@@ -478,14 +481,15 @@ class ColumnBrowserWindow(Adw.Window):
         self._setup_shortcuts()
         self.navigate(start_path)
 
-    def _miller_grew(self, needed_content_width: int):
-        """Élargit la fenêtre pour montrer la nouvelle colonne en entier, sans
-        que l'utilisateur ait à toucher au défilement -- dans la limite de
-        l'espace utile de l'écran. Au-delà, on retombe sur le scroll
-        automatique (MillerColumnsView._scroll_to_end) comme filet de
-        sécurité. On ne rétrécit jamais automatiquement : remonter dans la
-        chaîne ne doit pas faire sauter la fenêtre plus petite sous les yeux
-        de l'utilisateur."""
+    def _sync_window_width(self, needed_content_width: int):
+        """Ajuste la largeur de fenêtre au nombre de colonnes réellement
+        ouvertes -- grandit à l'ouverture d'une colonne, rétrécit à sa
+        fermeture (retour demandé par deux testeurs : l'espace vide laissé
+        à droite après une remontée dans l'arborescence était plus gênant
+        que le fait que la fenêtre change de taille). Reste borné par
+        MILLER_WINDOW_MIN_WIDTH d'un côté et l'espace utile de l'écran de
+        l'autre ; au-delà de l'écran, le scroll auto reste le filet de
+        sécurité (MillerColumnsView._scroll_to_end)."""
         surface = self.get_surface()
         display = self.get_display()
         if surface is None or display is None:
@@ -495,9 +499,10 @@ class ColumnBrowserWindow(Adw.Window):
             return
         geo = monitor.get_geometry()
         max_w = int(geo.width * 0.92)              # marge pour ne pas coller les bords de l'écran
-        target_w = min(needed_content_width + 40, max_w)   # +40 = marges internes / scrollbar
+        target_w = max(MILLER_WINDOW_MIN_WIDTH,
+                        min(needed_content_width + 40, max_w))  # +40 = marges internes / scrollbar
         cur_w = self.get_width() or 0
-        if target_w > cur_w:
+        if target_w != cur_w:
             self.set_default_size(target_w, self.get_height() or 650)
 
     def _setup_shortcuts(self):
