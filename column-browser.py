@@ -159,9 +159,11 @@ class MillerColumn(Gtk.Box):
 
     def __init__(self, dir_path: str, on_select, width: int = MILLER_COLUMN_WIDTH_DEFAULT):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.dir_path   = dir_path
-        self._on_select = on_select
+        self.dir_path      = dir_path
+        self._on_select    = on_select
+        self.current_width = width   # source de vérité pour le calcul de largeur fenêtre
         self.set_size_request(width, -1)
+
 
         self._store     = Gio.ListStore(item_type=FileEntry)
         self._selection = Gtk.SingleSelection(model=self._store)
@@ -296,12 +298,13 @@ def _make_miller_resize_handle(target_column: "MillerColumn") -> Gtk.Widget:
     drag = Gtk.GestureDrag()
 
     def on_begin(_g, _x, _y):
-        state["start_width"] = target_column.get_width() or MILLER_COLUMN_WIDTH_DEFAULT
+        state["start_width"] = target_column.current_width
 
     def on_update(_g, dx, _dy):
         new_w = int(state["start_width"] + dx)
         new_w = max(MILLER_COLUMN_MIN_WIDTH, min(MILLER_COLUMN_MAX_WIDTH, new_w))
         target_column.set_size_request(new_w, -1)
+        target_column.current_width = new_w
 
     drag.connect("drag-begin", on_begin)
     drag.connect("drag-update", on_update)
@@ -364,6 +367,15 @@ class MillerColumnsView(Gtk.ScrolledWindow):
             adj.set_value(adj.get_upper())
         return False
 
+    def _needed_width(self) -> int:
+        """Largeur totale de la chaîne actuelle (colonnes + poignées de 4px),
+        calculée à partir de current_width -- pas de get_width(), qui n'est
+        fiable qu'une fois la fenêtre allouée, ce qui n'est pas garanti juste
+        après un append()."""
+        cols   = sum(c.current_width for c in self._columns)
+        gaps   = 4 * max(0, len(self._columns) - 1)
+        return cols + gaps
+
     # -- Sélection ------------------------------------------------------------
 
     def _on_column_select(self, column: "MillerColumn", entry):
@@ -373,6 +385,10 @@ class MillerColumnsView(Gtk.ScrolledWindow):
         elif entry.is_dir:
             self._append_column(entry.path)
             self._owner._path_changed(entry.path)
+            # 1) on essaie d'élargir la fenêtre pour montrer la colonne en
+            #    entier sans scroll ; 2) si l'écran est trop petit pour ça,
+            #    le scroll reste le filet de sécurité.
+            self._owner._miller_grew(self._needed_width())
             GLib.idle_add(self._scroll_to_end)
         else:
             self._owner._path_changed(column.dir_path)
@@ -386,13 +402,27 @@ class MillerColumnsView(Gtk.ScrolledWindow):
 # Fenêtre
 # ---------------------------------------------------------------------------
 
+# Sans set_transient_for(), rien d'autre ne retient ces fenêtres en Python
+# une fois .present() retourné dans l'extension -- sans cette liste, le
+# ramasse-miettes pourrait les fermer aussitôt.
+_open_windows = []
+
+
 class ColumnBrowserWindow(Adw.Window):
     __gtype_name__ = "ColumnBrowserWindow"
 
     def __init__(self, start_path: str):
         super().__init__(title=T["title"])
         self.set_default_size(1100, 650)
-        self.set_transient_for(_nautilus_window())
+        # PAS de set_transient_for() ici : sur Mutter, une fenêtre transiente
+        # est traitée comme un dialogue et se voit refuser minimize/maximize
+        # au niveau du protocole -- decoration-layout ne peut rien y changer
+        # (déjà vécu sur annotate-image.py). En contrepartie, la fenêtre
+        # devient indépendante : on la garde en vie via _open_windows,
+        # sinon rien n'empêche le ramasse-miettes Python de la fermer juste
+        # après le .present() dans get_file_items()/get_background_items().
+        _open_windows.append(self)
+        self.connect("destroy", lambda w: _open_windows.remove(w) if w in _open_windows else None)
         self._path = start_path
 
         # ── CSS (poignée de resize + chevron) ──────────────────────────────
@@ -407,7 +437,13 @@ class ColumnBrowserWindow(Adw.Window):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         tv = Adw.ToolbarView()
-        tv.add_top_bar(Adw.HeaderBar())
+        header = Adw.HeaderBar()
+        # GNOME/Zorin n'affiche par défaut que le bouton "fermer" sur les
+        # fenêtres CSD -- on force explicitement minimize+maximize+close ici
+        # plutôt que de dépendre du réglage global org.gnome.desktop.wm
+        # (qui reste inchangé pour toutes les autres applications).
+        header.set_decoration_layout(":minimize,maximize,close")
+        tv.add_top_bar(header)
 
         # ── Barre adresse ───────────────────────────────────────────────────
         addr_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -441,6 +477,28 @@ class ColumnBrowserWindow(Adw.Window):
 
         self._setup_shortcuts()
         self.navigate(start_path)
+
+    def _miller_grew(self, needed_content_width: int):
+        """Élargit la fenêtre pour montrer la nouvelle colonne en entier, sans
+        que l'utilisateur ait à toucher au défilement -- dans la limite de
+        l'espace utile de l'écran. Au-delà, on retombe sur le scroll
+        automatique (MillerColumnsView._scroll_to_end) comme filet de
+        sécurité. On ne rétrécit jamais automatiquement : remonter dans la
+        chaîne ne doit pas faire sauter la fenêtre plus petite sous les yeux
+        de l'utilisateur."""
+        surface = self.get_surface()
+        display = self.get_display()
+        if surface is None or display is None:
+            return
+        monitor = display.get_monitor_at_surface(surface)
+        if monitor is None:
+            return
+        geo = monitor.get_geometry()
+        max_w = int(geo.width * 0.92)              # marge pour ne pas coller les bords de l'écran
+        target_w = min(needed_content_width + 40, max_w)   # +40 = marges internes / scrollbar
+        cur_w = self.get_width() or 0
+        if target_w > cur_w:
+            self.set_default_size(target_w, self.get_height() or 650)
 
     def _setup_shortcuts(self):
         ctrl = Gtk.ShortcutController()
