@@ -25,6 +25,7 @@ sudo apt update
 # Install everything at once
 sudo apt install \
   nautilus-dual-panel \
+  nautilus-column-browser \
   nautilus-extensions-manager \
   nautilus-archive-browser \
   nautilus-extract-here \
@@ -59,6 +60,7 @@ nautilus -q
 | Extension | Package | Description |
 |---|---|---|
 | 🗂️ **Dual Panel** | `nautilus-dual-panel` | Double-pane file manager inside Nautilus |
+| 🧭 **Column Browser** | `nautilus-column-browser` | Miller-columns (macOS Finder style) folder browser |
 | ⚙️ **Extensions Manager** | `nautilus-extensions-manager` | Enable/disable extensions on the fly |
 | 🗜️ **Archive Browser** | `nautilus-archive-browser` | Browse, extract and **create** archives |
 | 📦 **Extract Here** | `nautilus-extract-here` | Fast extraction (7z, rar, zip…) with multi-volume & password |
@@ -126,6 +128,7 @@ All packages install scripts into a dedicated namespace:
 ```
 /usr/share/nautilus-extensions-tof/          ← system install (PPA)
 ├── dual-panel.py
+├── column-browser.py
 ├── archive-browser.py
 ├── extract-here.py
 └── ...
@@ -166,6 +169,17 @@ A complete dual-pane file manager living inside Nautilus, launched with **F3** o
 - Nautilus-style sidebar (favorites, bookmarks, mounted volumes)
 - Native view mode sync with Nautilus preferences
 - Cross-extension awareness (live re-detection of installed extensions)
+
+---
+
+## 🧭 Featured: Column Browser
+
+A fast, standalone Miller-columns (macOS Finder style) folder browser — for when you just need to *find something*, not manage files. Launched with **F9** or via the right-click context menu.
+
+- Chained, horizontally-scrolling folder columns — drill down without losing your place
+- Drag-to-resize columns
+- Threaded per-column loading — no UI stall on large folders
+- Deliberately single-pane and read-focused; for copy/move between locations, use **Dual Panel**
 
 ---
 
@@ -351,6 +365,7 @@ When the corresponding extension is installed, these shortcuts are available glo
 | **F4** | Toggle Preview Panel | `nautilus-preview-panel` |
 | **F7** | Open Archive Browser on selection | `nautilus-archive-browser` |
 | **F8** | Open Search Content in the current directory | `nautilus-search-content` |
+| **F9** | Open Column Browser | `nautilus-column-browser` |
 
 ---
 
