@@ -151,7 +151,25 @@ MILLER_COLUMN_WIDTH_DEFAULT = 220
 MILLER_COLUMN_MIN_WIDTH     = 120
 MILLER_COLUMN_MAX_WIDTH     = 640
 MILLER_WINDOW_MIN_WIDTH     = 640   # jamais plus étroit qu'~2-3 colonnes, même à 1 seule colonne ouverte
-_MILLER_CHUNK_SIZE          = 400   # lots pour l'affichage progressif des gros dossiers
+
+
+def _make_miller_sorter() -> Gtk.CustomSorter:
+    """Dossiers d'abord, cachés groupés après les visibles, puis alpha --
+    même logique que dual-panel, en plus simple (une seule colonne, pas de
+    choix de clé de tri)."""
+    def compare(a, b, *_):
+        a_hidden = a.name.startswith(".")
+        b_hidden = b.name.startswith(".")
+        def group(e, hidden):
+            return (0 if not hidden else 1) if e.is_dir else (2 if not hidden else 3)
+        ga, gb = group(a, a_hidden), group(b, b_hidden)
+        if ga != gb:
+            return Gtk.Ordering.SMALLER if ga < gb else Gtk.Ordering.LARGER
+        na, nb = a.name.lower(), b.name.lower()
+        if na < nb: return Gtk.Ordering.SMALLER
+        if na > nb: return Gtk.Ordering.LARGER
+        return Gtk.Ordering.EQUAL
+    return Gtk.CustomSorter.new(compare)
 
 
 class MillerColumn(Gtk.Box):
@@ -167,11 +185,17 @@ class MillerColumn(Gtk.Box):
         self.dir_path      = dir_path
         self._on_select    = on_select
         self.current_width = width   # source de vérité pour le calcul de largeur fenêtre
+        self._load_gen     = 0
         self.set_size_request(width, -1)
 
-
-        self._store     = Gio.ListStore(item_type=FileEntry)
-        self._selection = Gtk.SingleSelection(model=self._store)
+        self._store = Gio.ListStore(item_type=FileEntry)
+        # Tri synchrone (pas incrémental) : les lots arrivent maintenant en
+        # ordre brut du système de fichiers via l'énumération GIO -- un tri
+        # incrémental continuerait à réordonner après le dernier lot et
+        # ferait dériver le défilement (constaté et corrigé sur dual-panel).
+        self._sort_model = Gtk.SortListModel.new(self._store, _make_miller_sorter())
+        self._sort_model.set_incremental(False)
+        self._selection = Gtk.SingleSelection(model=self._sort_model)
         # Sans ça, GTK sélectionne automatiquement la première ligne dès le
         # chargement -> drill-down involontaire dans le premier dossier venu.
         self._selection.set_autoselect(False)
@@ -196,52 +220,66 @@ class MillerColumn(Gtk.Box):
     # -- Chargement -----------------------------------------------------------
 
     def _load(self):
-        import threading
+        # Listing asynchrone via GIO -- exactement le mécanisme du vrai
+        # Nautilus (Gio.File.enumerate_children_async), et non plus un
+        # threading.Thread + os.scandir()/stat() bloquants. Ce dernier
+        # pattern s'est avéré pathologiquement lent sur certaines machines
+        # pour des raisons jamais totalement élucidées (voir l'historique
+        # de debug sur dual-panel : py-spy, cgroup/PSI, ordonnancement et
+        # C-states tous vérifiés normaux) -- plutôt que de le contourner,
+        # on l'évite entièrement.
+        self._load_gen += 1
+        my_gen = self._load_gen
         path = self.dir_path
 
-        def _work():
-            items = []
+        ATTRS = "standard::name,standard::type"
+        BATCH = 200
+
+        gfile = Gio.File.new_for_path(path)
+
+        def on_enum_ready(source, result, _data=None):
+            if my_gen != self._load_gen:
+                return
             try:
-                items = sorted(os.scandir(path), key=lambda e: (
-                    not e.is_dir(follow_symlinks=False),
-                    e.name.startswith("."),
-                    e.name.lower()
-                ))
-            except OSError as exc:
-                # Auparavant seul PermissionError était intercepté -- tout
-                # autre OSError (lien cassé, dossier disparu pendant le scan,
-                # entrée virtuelle bizarre type /proc) faisait mourir le
-                # thread en silence, sans jamais appeler idle_add : la
-                # colonne restait vide indéfiniment, sans indice pour
-                # comprendre pourquoi.
-                print(f"[column-browser] scandir({path}): {exc}")
+                enumerator = source.enumerate_children_finish(result)
+            except GLib.Error as exc:
+                print(f"[column-browser] enumerate_children({path}): {exc}")
+                return
+            request_next_batch(enumerator)
 
-            chunk, is_first = [], True
-            for it in items:
-                try:
-                    is_dir = it.is_dir(follow_symlinks=False)
-                except OSError:
-                    is_dir = False
-                chunk.append(FileEntry(it.path, is_dir))
-                if len(chunk) >= _MILLER_CHUNK_SIZE:
-                    GLib.idle_add(self._apply_chunk, path, chunk, is_first)
-                    chunk, is_first = [], False
+        def request_next_batch(enumerator):
+            enumerator.next_files_async(
+                BATCH, GLib.PRIORITY_DEFAULT, None, on_batch_ready, enumerator)
 
-            # Dernier lot -- envoyé même vide, pour garantir qu'un dossier
-            # vide (ou une erreur totale ci-dessus) affiche "vide" plutôt
-            # que de laisser la colonne indéfiniment sans réponse.
-            GLib.idle_add(self._apply_chunk, path, chunk, is_first)
+        def on_batch_ready(enumerator, result, _data=None):
+            if my_gen != self._load_gen:
+                return
+            try:
+                infos = enumerator.next_files_finish(result)
+            except GLib.Error as exc:
+                print(f"[column-browser] next_files({path}): {exc}")
+                infos = []
 
-        threading.Thread(target=_work, daemon=True).start()
+            if not infos:
+                enumerator.close_async(GLib.PRIORITY_DEFAULT, None, lambda *a: None)
+                return
 
-    def _apply_chunk(self, path, chunk, is_first):
-        if path != self.dir_path:
-            return False   # la colonne a été réutilisée/fermée entre-temps
-        if is_first:
-            self._store.splice(0, self._store.get_n_items(), chunk)
-        elif chunk:
-            self._store.splice(self._store.get_n_items(), 0, chunk)
-        return False
+            entries = []
+            for info in infos:
+                name = info.get_name()
+                is_dir = info.get_file_type() == Gio.FileType.DIRECTORY
+                entries.append(FileEntry(os.path.join(path, name), is_dir))
+
+            n = self._store.get_n_items()
+            self._store.splice(n, 0, entries)
+            request_next_batch(enumerator)
+
+        # Repartir d'une colonne vide à chaque (re)chargement -- refresh()
+        # peut être appelé plusieurs fois (F5) sur la même colonne.
+        self._store.remove_all()
+        gfile.enumerate_children_async(
+            ATTRS, Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT,
+            None, on_enum_ready, None)
 
     def refresh(self):
         """Recharge le contenu sans toucher à la sélection/à la chaîne (F5)."""
@@ -296,14 +334,14 @@ class MillerColumn(Gtk.Box):
 
     def _on_selection_changed(self, selection, *_a):
         pos = selection.get_selected()
-        entry = self._store.get_item(pos) if pos != Gtk.INVALID_LIST_POSITION else None
+        entry = self._sort_model.get_item(pos) if pos != Gtk.INVALID_LIST_POSITION else None
         self._on_select(self, entry)
 
     def _on_row_activate(self, list_view, position):
         # Le drill-down des dossiers passe déjà par selection-changed (le
         # simple clic sélectionne avant d'activer) -- ici on ne gère que
         # l'ouverture d'un fichier au double-clic/Entrée.
-        entry = self._store.get_item(position)
+        entry = self._sort_model.get_item(position)
         if entry and not entry.is_dir:
             try:
                 Gio.AppInfo.launch_default_for_uri(f"file://{entry.path}", None)
