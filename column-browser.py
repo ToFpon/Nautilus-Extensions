@@ -132,11 +132,14 @@ def _resolve_column_icon() -> str:
 class FileEntry(GObject.Object):
     __gtype_name__ = "ColumnBrowserFileEntry"
 
-    def __init__(self, path):
+    def __init__(self, path, is_dir=None):
         super().__init__()
-        self.path   = path
-        self.name   = os.path.basename(path)
-        self.is_dir = os.path.isdir(path)
+        self.path = path
+        self.name = os.path.basename(path)
+        # is_dir peut être fourni par l'appelant -- MillerColumn le connaît
+        # déjà via DirEntry.is_dir() (qui réutilise le d_type du readdir(),
+        # sans stat() supplémentaire). Sinon on le calcule nous-mêmes.
+        self.is_dir = os.path.isdir(path) if is_dir is None else is_dir
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +151,7 @@ MILLER_COLUMN_WIDTH_DEFAULT = 220
 MILLER_COLUMN_MIN_WIDTH     = 120
 MILLER_COLUMN_MAX_WIDTH     = 640
 MILLER_WINDOW_MIN_WIDTH     = 640   # jamais plus étroit qu'~2-3 colonnes, même à 1 seule colonne ouverte
+_MILLER_CHUNK_SIZE          = 400   # lots pour l'affichage progressif des gros dossiers
 
 
 class MillerColumn(Gtk.Box):
@@ -196,25 +200,47 @@ class MillerColumn(Gtk.Box):
         path = self.dir_path
 
         def _work():
-            entries = []
+            items = []
             try:
                 items = sorted(os.scandir(path), key=lambda e: (
                     not e.is_dir(follow_symlinks=False),
                     e.name.startswith("."),
                     e.name.lower()
                 ))
-                for it in items:
-                    entries.append(FileEntry(it.path))
-            except PermissionError:
-                pass
-            GLib.idle_add(self._apply_entries, path, entries)
+            except OSError as exc:
+                # Auparavant seul PermissionError était intercepté -- tout
+                # autre OSError (lien cassé, dossier disparu pendant le scan,
+                # entrée virtuelle bizarre type /proc) faisait mourir le
+                # thread en silence, sans jamais appeler idle_add : la
+                # colonne restait vide indéfiniment, sans indice pour
+                # comprendre pourquoi.
+                print(f"[column-browser] scandir({path}): {exc}")
+
+            chunk, is_first = [], True
+            for it in items:
+                try:
+                    is_dir = it.is_dir(follow_symlinks=False)
+                except OSError:
+                    is_dir = False
+                chunk.append(FileEntry(it.path, is_dir))
+                if len(chunk) >= _MILLER_CHUNK_SIZE:
+                    GLib.idle_add(self._apply_chunk, path, chunk, is_first)
+                    chunk, is_first = [], False
+
+            # Dernier lot -- envoyé même vide, pour garantir qu'un dossier
+            # vide (ou une erreur totale ci-dessus) affiche "vide" plutôt
+            # que de laisser la colonne indéfiniment sans réponse.
+            GLib.idle_add(self._apply_chunk, path, chunk, is_first)
 
         threading.Thread(target=_work, daemon=True).start()
 
-    def _apply_entries(self, path, entries):
+    def _apply_chunk(self, path, chunk, is_first):
         if path != self.dir_path:
-            return False
-        self._store.splice(0, self._store.get_n_items(), entries)
+            return False   # la colonne a été réutilisée/fermée entre-temps
+        if is_first:
+            self._store.splice(0, self._store.get_n_items(), chunk)
+        elif chunk:
+            self._store.splice(self._store.get_n_items(), 0, chunk)
         return False
 
     def refresh(self):
