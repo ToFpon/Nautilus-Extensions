@@ -596,7 +596,16 @@ class FilePanel(Gtk.Box):
         self._col_view.append_column(col_date)
 
         # Connecter le tri natif ColumnView → sort_model
-        # Tri par défaut sur la colonne Nom au premier affichage
+        # Tri par défaut sur la colonne Nom -- activé tout de suite, sans
+        # attendre "realize" : ce signal ne se déclenche qu'une fois, à un
+        # moment qui dépend de la visibilité du ColumnView dans la Stack
+        # (caché si la vue grille est active au démarrage). Avant, ce
+        # timing peu fiable ne se voyait jamais car Python pré-triait tout ;
+        # avec le listing GIO asynchrone (ordre brut du système de
+        # fichiers), le tri GTK doit être actif dès la toute première
+        # donnée insérée. On garde aussi le hook realize en filet de
+        # sécurité (idempotent, sans risque à appeler deux fois).
+        self._col_view.sort_by_column(col_name, Gtk.SortType.ASCENDING)
         self._col_view.connect("realize", self._on_col_view_realize)
 
         # ── GridView ─────────────────────────────────────────────────────────
