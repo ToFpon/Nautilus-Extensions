@@ -378,7 +378,7 @@ def _fmt_perms(mode):
         bits += "x" if mode & who[2] else "-"
     return bits
 
-def _icon_for(path, is_dir):
+def _icon_for(path, is_dir, mode=None):
     """Retourne l'icône régulière du thème pour un fichier ou dossier."""
     try:
         if is_dir:
@@ -394,10 +394,22 @@ def _icon_for(path, is_dir):
                         return name
             return "folder"
         else:
-            # Fichier — détection via Gio content type
-            gfile = Gio.File.new_for_path(path)
-            info  = gfile.query_info("standard::icon,standard::content-type", 0, None)
-            gicon = info.get_icon()
+            # Fichier — Gio.File.query_info("standard::content-type") lit le
+            # fichier (sniffing des premiers octets) dès que l'extension ne
+            # suffit pas à deviner le type -- catastrophique sur un dossier
+            # plein de binaires sans extension type /usr/bin. On utilise
+            # Gio.content_type_guess() sur le NOM seul (data=None), qui ne
+            # regarde jamais le contenu -- juste un peu moins précis pour
+            # les fichiers sans extension (repli générique), largement
+            # acceptable pour une icône.
+            base = os.path.basename(path)
+            content_type, uncertain = Gio.content_type_guess(base, None)
+            if uncertain and mode is not None and stat.S_ISREG(mode) and (mode & 0o111):
+                # Binaire exécutable sans extension (le cas de /usr/bin) --
+                # mode est déjà en mémoire (issu du même stat() que taille/
+                # date), donc ce test ne coûte rien de plus.
+                return "application-x-executable"
+            gicon = Gio.content_type_get_icon(content_type)
             if gicon:
                 theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
                 names = gicon.get_names() if hasattr(gicon, "get_names") else []
@@ -416,17 +428,29 @@ def _icon_for(path, is_dir):
 class FileEntry(GObject.Object):
     __gtype_name__ = "DualPanelFileEntry"
 
-    def __init__(self, path):
+    def __init__(self, path, is_dir=None, stat_result=None,
+                 size=None, mtime=None, mode=None):
         super().__init__()
-        self.path    = path
-        self.name    = os.path.basename(path)
-        self.is_dir  = os.path.isdir(path)
+        self.path = path
+        self.name = os.path.basename(path)
+        if size is not None or mtime is not None or mode is not None:
+            # Valeurs déjà connues (Gio.FileInfo, via enumerate_children_async)
+            # -- aucun stat() supplémentaire nécessaire.
+            self.is_dir = bool(is_dir)
+            self.size   = size or 0
+            self.mtime  = mtime or 0
+            self.mode   = mode or 0
+            return
         try:
-            s = os.stat(path)
-            self.size  = s.st_size
-            self.mtime = s.st_mtime
-            self.mode  = s.st_mode
+            s = stat_result if stat_result is not None else os.stat(path)
+            self.is_dir = is_dir if is_dir is not None else stat.S_ISDIR(s.st_mode)
+            self.size   = s.st_size
+            self.mtime  = s.st_mtime
+            self.mode   = s.st_mode
         except OSError:
+            # Lien cassé / fichier disparu -- affiché quand même (comme
+            # avant), juste avec des stats à zéro plutôt que masqué.
+            self.is_dir = bool(is_dir)
             self.size = self.mtime = self.mode = 0
 
     @property
@@ -510,7 +534,14 @@ class FilePanel(Gtk.Box):
         # SortListModel branché sur le sorter natif du ColumnView
         self._sort_model = Gtk.SortListModel.new(
             self._store, self._col_view.get_sorter())
-        self._sort_model.set_incremental(True)
+        # Synchrone, pas incrémental -- avec le listing asynchrone GIO, les
+        # lots arrivent dans l'ordre brut du système de fichiers (pas
+        # pré-triés côté Python comme avant). En incrémental, le tri
+        # continue de réordonner en arrière-plan après l'arrivée du dernier
+        # lot, ce qui fait dériver le défilement de façon aléatoire. Les
+        # lots restent petits (200 éléments), un tri synchrone ne coûte rien
+        # de perceptible.
+        self._sort_model.set_incremental(False)
         self._selection  = Gtk.MultiSelection.new(self._sort_model)
         self._col_view.set_model(self._selection)
         self._selection.connect("selection-changed",
@@ -590,11 +621,13 @@ class FilePanel(Gtk.Box):
         scroll_list.set_vexpand(True)
         scroll_list.set_overlay_scrolling(False)
         scroll_list.set_child(self._col_view)
+        self._scroll_list = scroll_list
 
         scroll_grid = Gtk.ScrolledWindow()
         scroll_grid.set_vexpand(True)
         scroll_grid.set_overlay_scrolling(False)
         scroll_grid.set_child(self._grid_view)
+        self._scroll_grid = scroll_grid
 
         self._view_stack.add_named(scroll_list, "list")
         self._view_stack.add_named(scroll_grid, "grid")
@@ -696,7 +729,7 @@ class FilePanel(Gtk.Box):
         box._entry = entry
         icon     = box.get_first_child()
         lbl_name = icon.get_next_sibling()
-        icon_name = _icon_for(entry.path, entry.is_dir)
+        icon_name = _icon_for(entry.path, entry.is_dir, entry.mode)
         theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
         if theme.has_icon(icon_name):
             paintable = theme.lookup_icon(
@@ -787,7 +820,7 @@ class FilePanel(Gtk.Box):
         icon = box.get_first_child()
         lbl  = icon.get_next_sibling()
 
-        icon_name = _icon_for(entry.path, entry.is_dir)
+        icon_name = _icon_for(entry.path, entry.is_dir, entry.mode)
         theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
         if theme.has_icon(icon_name):
             paintable = theme.lookup_icon(
@@ -852,9 +885,21 @@ class FilePanel(Gtk.Box):
         self.refresh()
 
     def refresh(self):
-        import threading
         path = self._path
         self._store.remove_all()
+        self._refresh_gen = getattr(self, "_refresh_gen", 0) + 1
+        my_gen = self._refresh_gen
+
+        # Nouvelle navigation -- toujours repartir du haut. Sans ça, les
+        # lots arrivant en ordre système de fichiers (pas trié) puis
+        # réordonnés par le Gtk.SortListModel peuvent insérer des éléments
+        # au-dessus de la zone visible, ce qui fait "sauter" le défilement
+        # au milieu du dossier pendant le chargement.
+        for sw in (getattr(self, "_scroll_list", None), getattr(self, "_scroll_grid", None)):
+            if sw is not None:
+                adj = sw.get_vadjustment()
+                if adj is not None:
+                    adj.set_value(0)
 
         # Spinner pendant le chargement
         if not hasattr(self, "_spinner"):
@@ -872,44 +917,88 @@ class FilePanel(Gtk.Box):
             self._overlay.add_overlay(self._spinner)
             self._scroll.set_child(self._overlay)
 
-        def _work():
-            entries = []
+        # --------------------------------------------------------------
+        # Listing asynchrone via GIO -- exactement le mécanisme que le
+        # vrai Nautilus utilise pour lister un dossier (Gio.File.
+        # enumerate_children_async). Un ancien code utilisait un thread
+        # Python (threading.Thread) + os.scandir()/os.stat() bloquants :
+        # sur cette machine, ce pattern précis s'est avéré pathologiquement
+        # lent sur certains dossiers (constaté : >100s pour lister /usr/bin,
+        # contre 1s dans le vrai Nautilus et 9ms hors du process Nautilus,
+        # via un script autonome). py-spy, cgroup/PSI, ordonnancement et
+        # C-states ont tous été vérifiés normaux ; le seul dénominateur
+        # commun identifié était "thread Python + syscalls bloquants dans ce
+        # process précis". Plutôt que de contourner ce pattern, on l'évite
+        # entièrement : ici, tout se passe sur la boucle GLib principale, via
+        # callbacks, sans le moindre thread ni appel bloquant de notre côté.
+        # Le tri (dossiers d'abord, cachés groupés, alpha) n'a pas besoin
+        # d'être fait ici : le Gtk.SortListModel déjà en place (_make_sorter)
+        # s'en charge à l'affichage, quel que soit l'ordre d'arrivée.
+        ATTRS = "standard::name,standard::type,standard::size,time::modified,unix::mode"
+        BATCH = 200
+
+        gfile = Gio.File.new_for_path(path)
+
+        def on_enum_ready(source, result, _data=None):
+            if my_gen != self._refresh_gen:
+                return
             try:
-                items = sorted(os.scandir(path), key=lambda e: (
-                    not e.is_dir(follow_symlinks=False),
-                    e.name.startswith("."),
-                    e.name.lower()
-                ))
-                for it in items:
-                    entries.append(FileEntry(it.path))
-            except PermissionError:
-                pass
-            GLib.idle_add(self._load_entries, path, entries)
+                enumerator = source.enumerate_children_finish(result)
+            except GLib.Error as exc:
+                # Dossier disparu / permissions / lien cassé -- affiché vide
+                # plutôt que de laisser le spinner tourner indéfiniment.
+                print(f"[dual-panel] enumerate_children({path}): {exc}")
+                if hasattr(self, "_spinner"):
+                    self._spinner.stop()
+                return
+            request_next_batch(enumerator)
 
-        threading.Thread(target=_work, daemon=True).start()
+        def request_next_batch(enumerator):
+            enumerator.next_files_async(
+                BATCH, GLib.PRIORITY_DEFAULT, None, on_batch_ready, enumerator)
 
-    def _load_entries(self, path, entries):
-        if path != self._path:
-            return False
-        self._pending = entries[:]
-        self._load_page()
-        return False
+        def on_batch_ready(enumerator, result, _data=None):
+            if my_gen != self._refresh_gen:
+                return
+            try:
+                infos = enumerator.next_files_finish(result)
+            except GLib.Error as exc:
+                print(f"[dual-panel] next_files({path}): {exc}")
+                infos = []
 
-    def _load_page(self):
-        if not hasattr(self, "_pending") or not self._pending:
-            # Tout chargé — arrêter le spinner
-            if hasattr(self, "_spinner"):
-                self._spinner.stop()
-            return
-        batch = self._pending[:100]
-        self._pending = self._pending[100:]
-        n = self._store.get_n_items()
-        self._store.splice(n, 0, batch)
-        if self._pending:
-            GLib.timeout_add(8, self._load_page)
-        else:
-            if hasattr(self, "_spinner"):
-                self._spinner.stop()
+            if not infos:
+                enumerator.close_async(GLib.PRIORITY_DEFAULT, None, lambda *a: None)
+                if hasattr(self, "_spinner"):
+                    self._spinner.stop()
+                # Filet de sécurité -- si le tri incrémental du
+                # SortListModel a fait dériver le défilement pendant le
+                # chargement, on le remet en haut une fois tout arrivé.
+                for sw in (getattr(self, "_scroll_list", None),
+                           getattr(self, "_scroll_grid", None)):
+                    if sw is not None:
+                        adj = sw.get_vadjustment()
+                        if adj is not None:
+                            adj.set_value(0)
+                return
+
+            entries = []
+            for info in infos:
+                name = info.get_name()
+                child_path = os.path.join(path, name)
+                is_dir = info.get_file_type() == Gio.FileType.DIRECTORY
+                size = info.get_size()
+                mtime = info.get_attribute_uint64("time::modified") or 0
+                mode = info.get_attribute_uint32("unix::mode") or 0
+                entries.append(FileEntry(child_path, is_dir,
+                                          size=size, mtime=mtime, mode=mode))
+
+            n = self._store.get_n_items()
+            self._store.splice(n, 0, entries)
+            request_next_batch(enumerator)
+
+        gfile.enumerate_children_async(
+            ATTRS, Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT,
+            None, on_enum_ready, None)
 
     def _make_sorter(self, sort_key):
         """Crée un CustomSorter pour une colonne."""
