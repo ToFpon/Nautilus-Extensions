@@ -352,6 +352,7 @@ A central hub to manage all the other extensions without manually moving files.
 - **`nautilus-duration-column`** — adds a sortable Duration column (HH:MM:SS) for audio/video files via `ffprobe`
 - **`nautilus-folder-color-revival`** — revive the classic folder colorizer; works on modern Nautilus 46+
 - **`nautilus-edit-gedit`** — one-click open text files in Gedit (filtered by extension to avoid clutter)
+- **`nautilus-create-link-in-clipboard`** — right-click → "Create Link in Clipboard": stages absolute symlinks and puts them on the clipboard as COPY, so pasting copies the links (repeatable)
 
 ---
 
