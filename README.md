@@ -39,6 +39,7 @@ sudo apt install \
   nautilus-video-to-audio \
   nautilus-duration-column \
   nautilus-cut-dim \
+  nautilus-progress-mirror \
   nautilus-edit-gedit \
   nautilus-folder-color-revival \
   nautilus-hidden-dim-icon
@@ -74,6 +75,7 @@ nautilus -q
 | 🎵 **Video to Audio** | `nautilus-video-to-audio` | Extract audio from videos (MP3, M4A, OGG, OPUS, FLAC, WAV) |
 | ⏱️ **Duration Column** | `nautilus-duration-column` | Duration column for audio/video files |
 | ✂️ **Cut Item Dimmer** | `nautilus-cut-dim` | Visual dimming of cut (Ctrl+X) files |
+| 📊 **Progress Mirror** | `nautilus-progress-mirror` | Pop-up window mirroring long copy/move progress |
 | ✏️ **Edit with Gedit** | `nautilus-edit-gedit` | Open text files directly in Gedit |
 | 📁 **Folder Color Revival** | `nautilus-folder-color-revival` | Color & emblem tagging for folders |
 | 👁️ **Hidden Dim (icon)** | `nautilus-hidden-dim-icon` | Dim only the icon of hidden files |
@@ -178,7 +180,7 @@ A fast, standalone Miller-columns (macOS Finder style) folder browser — for wh
 
 - Chained, horizontally-scrolling folder columns — drill down without losing your place
 - Drag-to-resize columns
-- Threaded per-column loading — no UI stall on large folders
+- Asynchronous per-column loading through GIO (the same mechanism Nautilus uses) — large folders open instantly
 - Deliberately single-pane and read-focused; for copy/move between locations, use **Dual Panel**
 
 ---
@@ -352,6 +354,7 @@ A central hub to manage all the other extensions without manually moving files.
 - **`nautilus-duration-column`** — adds a sortable Duration column (HH:MM:SS) for audio/video files via `ffprobe`
 - **`nautilus-folder-color-revival`** — revive the classic folder colorizer; works on modern Nautilus 46+
 - **`nautilus-edit-gedit`** — one-click open text files in Gedit (filtered by extension to avoid clutter)
+- **`nautilus-progress-mirror`** — a small window appears over Nautilus during long copies/moves, mirroring the native progress (bar, details, cancel button); short operations stay silent and the native progress circle is left untouched
 
 ---
 
