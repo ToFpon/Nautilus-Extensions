@@ -212,10 +212,8 @@ class _MirrorRow:
 
         self.box.append(left)
 
-        self.cancel = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        self.cancel.set_tooltip_text(T["cancel"])
+        self.cancel = Gtk.Button(label=T["cancel"])
         self.cancel.set_valign(Gtk.Align.CENTER)
-        self.cancel.add_css_class("circular")
         self.cancel.connect("clicked", lambda _b: on_cancel(self))
         self.box.append(self.cancel)
 
@@ -234,7 +232,7 @@ class _MirrorWindow(Adw.Window):
 
     def __init__(self, on_user_close):
         super().__init__(title=T["title"])
-        self.set_default_size(420, -1)
+        self.set_default_size(480, -1)
         self.set_resizable(False)
         self._rows = {}
         self._on_user_close = on_user_close
