@@ -198,7 +198,11 @@ class _MirrorRow:
 
         self.status = Gtk.Label(xalign=0.0)
         self.status.set_ellipsize(Pango.EllipsizeMode.END)
-        self.status.set_max_width_chars(45)
+        self.status.set_hexpand(True)
+        # Plafond de sécurité seulement (la fenêtre s'adapte au texte jusqu'à
+        # cette limite) : sans lui, un nom de volume très long ferait une
+        # fenêtre démesurée.
+        self.status.set_max_width_chars(80)
         left.append(self.status)
 
         self.bar = Gtk.ProgressBar()
@@ -232,7 +236,10 @@ class _MirrorWindow(Adw.Window):
 
     def __init__(self, on_user_close):
         super().__init__(title=T["title"])
-        self.set_default_size(480, -1)
+        # Pas de largeur imposée : la fenêtre prend la largeur naturelle de son
+        # contenu (donc s'élargit pour montrer le titre en entier), avec un
+        # minimum de 480 px au total (448 + 2 x 16 de marge, voir plus bas).
+        self.set_default_size(-1, -1)
         self.set_resizable(False)
         self._rows = {}
         self._on_user_close = on_user_close
@@ -240,6 +247,7 @@ class _MirrorWindow(Adw.Window):
         self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         for side in ("top", "bottom", "start", "end"):
             getattr(self._list, f"set_margin_{side}")(16)
+        self._list.set_size_request(448, -1)
 
         # Adw.Window + ToolbarView : mêmes coins arrondis que tes autres
         # outils (un Gtk.Window nu ne les reçoit pas du thème).
