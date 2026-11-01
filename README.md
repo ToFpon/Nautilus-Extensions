@@ -41,7 +41,6 @@ sudo apt install \
   nautilus-cut-dim \
   nautilus-progress-mirror \
   nautilus-edit-gedit \
-  nautilus-folder-color-revival \
   nautilus-hidden-dim-icon
   # (or nautilus-hidden-dim-all instead of -icon)
 
@@ -77,7 +76,6 @@ nautilus -q
 | ✂️ **Cut Item Dimmer** | `nautilus-cut-dim` | Visual dimming of cut (Ctrl+X) files |
 | 📊 **Progress Mirror** | `nautilus-progress-mirror` | Pop-up window mirroring long copy/move progress |
 | ✏️ **Edit with Gedit** | `nautilus-edit-gedit` | Open text files directly in Gedit |
-| 📁 **Folder Color Revival** | `nautilus-folder-color-revival` | Color & emblem tagging for folders |
 | 👁️ **Hidden Dim (icon)** | `nautilus-hidden-dim-icon` | Dim only the icon of hidden files |
 | 👁️ **Hidden Dim (all)** | `nautilus-hidden-dim-all` | Dim icon + label of hidden files |
 | 🔧 **Common** | `nautilus-extensions-tof-common` | Shared linker script (installed automatically) |
@@ -352,7 +350,6 @@ A central hub to manage all the other extensions without manually moving files.
 
 - **`nautilus-cut-dim`** — visually dims items cut with `Ctrl+X` so you don't forget what's in the clipboard
 - **`nautilus-duration-column`** — adds a sortable Duration column (HH:MM:SS) for audio/video files via `ffprobe`
-- **`nautilus-folder-color-revival`** — revive the classic folder colorizer; works on modern Nautilus 46+
 - **`nautilus-edit-gedit`** — one-click open text files in Gedit (filtered by extension to avoid clutter)
 - **`nautilus-progress-mirror`** — a small window appears over Nautilus during long copies/moves, mirroring the native progress (bar, details, cancel button); short operations stay silent and the native progress circle is left untouched
 
